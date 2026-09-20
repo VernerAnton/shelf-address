@@ -1,0 +1,69 @@
+name: CI / Deploy
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    name: Typecheck, lint, schema, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm run lint
+
+      # Asserts the schema still enforces the rules the spec calls DECIDED.
+      - run: npm run db:verify
+
+      # The Workers build, not just `next build` — catches anything that
+      # compiles for Node but not for the Workers runtime.
+      - run: npx opennextjs-cloudflare build
+
+  deploy:
+    name: Deploy to Cloudflare
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # Dormant until CLOUDFLARE_API_TOKEN is set in the repository secrets.
+      # Until then this job reports success without deploying, so the workflow
+      # is safe to merge before the Cloudflare account is connected.
+      # See "Optional: deploy automatically on every push" in the README.
+      - name: Check for Cloudflare credentials
+        id: creds
+        run: |
+          if [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLOUDFLARE_API_TOKEN is not set — skipping deploy. See the README to enable it."
+          fi
+
+      - if: steps.creds.outputs.present == 'true'
+        run: npm ci
+
+      # Database migrations are deliberately NOT run here. Applying schema
+      # changes to the live database is a separate, deliberate act:
+      # `npm run db:migrate:remote`.
+      - if: steps.creds.outputs.present == 'true'
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

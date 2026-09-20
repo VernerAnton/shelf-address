@@ -1,0 +1,31 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "shelf-address",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-09-18",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+
+	// Relational data: locations tree, editions cache, copies. Spec §2.
+	// `database_id` is filled in by `npx wrangler d1 create shelf-address-db`.
+	// See README "Connecting your Cloudflare account".
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "shelf-address-db",
+			"database_id": "REPLACE_ME_SEE_README",
+			"migrations_dir": "migrations"
+		}
+	],
+
+	// Cover images (§2.2) and site reference maps (§5).
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "shelf-address-media"
+		}
+	]
+}

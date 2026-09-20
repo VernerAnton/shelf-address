@@ -1,0 +1,4 @@
+# Local-only environment variables for `wrangler dev` / `opennextjs-cloudflare preview`.
+# Copy to `.dev.vars` (gitignored) and fill in as needed.
+# Nothing is required for Phase 1 — D1 and R2 are bound in wrangler.jsonc,
+# not through this file. Phase 4 may add API keys here.

@@ -10,13 +10,13 @@
 	},
 
 	// Relational data: locations tree, editions cache, copies. Spec §2.
-	// `database_id` is filled in by `npx wrangler d1 create shelf-address-db`.
+	// `database_id` comes from `npx wrangler d1 create shelf-address-db`.
 	// See README "Connecting your Cloudflare account".
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "shelf-address-db",
-			"database_id": "REPLACE_ME_SEE_README",
+			"database_id": "6f4c325e-a375-42ab-a6c3-7271253f4fb1",
 			"migrations_dir": "migrations"
 		}
 	],

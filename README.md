@@ -44,8 +44,8 @@ npx wrangler login
 npx wrangler d1 create shelf-address-db
 ```
 
-Copy that `database_id` into `wrangler.jsonc`, replacing
-`"REPLACE_ME_SEE_README"`.
+Copy that `database_id` into `wrangler.jsonc`. (Already done for the
+production database — only needed if you ever recreate it.)
 
 **3. Create the image bucket.**
 

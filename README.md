@@ -8,11 +8,12 @@ spec in [`docs/spec.md`](docs/spec.md); decisions taken since the spec was
 written are in [`docs/spec-corrections.md`](docs/spec-corrections.md) and
 override it where they conflict.
 
-**Status: Phase 2 (location tree) complete.** Live at
-<https://shelf-address.verner-sdr.workers.dev>. Sites, shelves and sections can
-be added, edited, moved, reordered, browsed and deleted, and shelf addresses
-are enforced unique across every site. Scanning (Phase 3) and lookup
-(Phase 4) are not built yet.
+**Status: Phase 3 (scanning) complete.** Live at
+<https://shelf-address.verner-sdr.workers.dev>. Places (sites, shelves,
+sections) can be built, moved and reordered; books can be scanned with the
+phone camera or typed in and logged at the place you're standing, including
+with no signal. Book lookup — titles, authors, covers (Phase 4) — is next;
+until then books show their ISBN.
 
 ## Stack
 
@@ -103,8 +104,9 @@ full-screen with its own icon, no browser bars.
 - **Android:** open it in **Chrome** → **⋮** menu → **Install app** (or
   **Add to Home screen**).
 
-It still needs a connection to work: there is no offline mode (spec §8,
-open item #7).
+The Scan tab works with no signal: scans are kept on the phone and upload by
+themselves when the connection returns (docs/spec-corrections.md §10). Other
+screens need a connection. The camera needs HTTPS, which workers.dev provides.
 
 With Cloudflare Access on, the login lasts for the Access *session duration*
 (default 24 hours) before a new email code is needed. Lengthen it in Zero
@@ -167,6 +169,9 @@ is generated, not hand-written.
 ## Layout
 
 ```
+app/scan/              Scan tab: camera (ZXing), typed ISBN, offline queue UI
+app/copies/            one book's page: condition, move, remove
+app/api/               JSON API used by the Scan tab's upload queue
 app/sections/          location tree: drill-down, A–Z, add/edit forms
 app/sections/actions.ts   Server Actions behind the forms
 app/status/           bindings health check
@@ -174,6 +179,11 @@ lib/cloudflare.ts     getDb() / getBucket() — the binding accessors
 lib/locations.ts      location tree queries and writes
 lib/location-model.ts types and tree rules, safe for client code
 lib/address.ts        address normalising, uniqueness key, near-miss check
+lib/isbn.ts           ISBN-13 validation, ISBN-10 conversion
+lib/copies.ts         copy (physical book) queries and writes
+lib/scan-queue.ts     offline queue rules (pure, unit tested)
+lib/client/           phone-side storage (IndexedDB) and upload sync
+public/sw.js          service worker: Scan tab opens with no signal
 migrations/           D1 schema, applied in filename order
 scripts/verify-schema.mjs   schema rule assertions (npm run db:verify)
 wrangler.jsonc        Worker name, bindings, compatibility date

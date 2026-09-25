@@ -2,7 +2,9 @@ import { getDb } from "@/lib/cloudflare";
 import { addressKey, cleanAddress, isSimilarAddress } from "@/lib/address";
 import {
   allowedChildKinds,
+  byDisplayOrder,
   canHaveAddress,
+  collator,
   whyCannotPlace,
   type AddressHolder,
   type AddressedPlace,
@@ -45,21 +47,6 @@ function toLocation(row: LocationRow): Location {
   };
 }
 
-const collator = new Intl.Collator("fi", { numeric: true, sensitivity: "base" });
-
-const KIND_ORDER: Record<LocationKind, number> = { site: 0, shelf: 1, node: 1 };
-
-/**
- * Explicit sort_order first, then sites before everything else, then label in
- * natural order — "Section 2" before "Section 10".
- */
-function byDisplayOrder(a: Location, b: Location): number {
-  return (
-    a.sortOrder - b.sortOrder ||
-    KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
-    collator.compare(a.label, b.label)
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Reads

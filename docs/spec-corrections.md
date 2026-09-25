@@ -114,8 +114,7 @@ ambiguous which panel applies. Enforced by the app; the schema permits it.
 
 Signal at the warehouse is unreliable, so a local scan queue is worth
 building: scans made without a connection are kept on the phone and uploaded
-once it returns. Deferred by choice — not part of Phase 2 — but it should be
-designed into Phase 3 (scanning) rather than bolted on afterwards.
+once it returns. Built into Phase 3 — see §10.
 
 ## 9. Sections can have an address too.
 
@@ -139,3 +138,32 @@ Implemented in `migrations/0003_section_addresses.sql`, which rebuilds
 `locations` (SQLite can't alter a CHECK constraint) without losing rows.
 Whether addressed sections should also get an instructions panel is open —
 decide in Phase 5.
+
+## 10. How scanning works (Phase 3).
+
+Decisions taken while building §6; none contradict the spec, but they're
+choices a reader of the spec couldn't infer.
+
+- **The active place lives on the phone.** "Scan here" on a shelf or section,
+  or the picker on the Scan tab, sets where books are logged until changed.
+  Each phone has its own.
+- **Offline first.** Every scan is written to the phone (IndexedDB) before any
+  upload is tried, then uploaded in order when there's signal — on scan, when
+  the connection returns, when the app is reopened, and every 20 seconds.
+  The phone makes each copy's id, so a retried upload is stored once. A
+  service worker lets the Scan tab open with no signal; the place picker works
+  from a copy of the tree saved on the phone.
+- **Undo and condition work offline too.** Undoing a scan that hasn't
+  uploaded yet just drops it; a condition added before upload travels with it.
+- **A scan that can never succeed is parked, not lost** — e.g. its place was
+  deleted meanwhile. It can be re-logged at the current place or discarded.
+- **Uploads use a JSON API, not Server Actions.** Server Action ids change on
+  every deploy, which would strand scans queued before an update.
+- **Continuous camera scanning logs a barcode once while it stays in view.**
+  Taking the book away and showing it again logs another copy.
+- **Only book barcodes are accepted:** EAN-13 with the 978/979 prefix. Other
+  barcodes are explained and ignored. Typed ISBN-10s are converted.
+- **Condition is optional and added after the scan**, from the recent-scans
+  list or the book's own page.
+- **A copy points at a placeholder edition** (ISBN only) until Phase 4's
+  lookup fills in title, author and cover.

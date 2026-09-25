@@ -3,7 +3,7 @@
   "short_name": "Shelf",
   "description": "Scan a book, log where it lives, walk back to it later.",
   "id": "/",
-  "start_url": "/",
+  "start_url": "/scan",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",

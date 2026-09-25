@@ -55,6 +55,23 @@ export function nearestAddressed(path: Location[]): Location | null {
   return null;
 }
 
+/** Finnish-aware, number-aware: "Section 2" before "Section 10", Ä after Z. */
+export const collator = new Intl.Collator("fi", { numeric: true, sensitivity: "base" });
+
+const KIND_ORDER: Record<LocationKind, number> = { site: 0, shelf: 1, node: 1 };
+
+/**
+ * Explicit sort_order first, then sites before everything else, then label in
+ * natural order — "Section 2" before "Section 10".
+ */
+export function byDisplayOrder(a: Location, b: Location): number {
+  return (
+    a.sortOrder - b.sortOrder ||
+    KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+    collator.compare(a.label, b.label)
+  );
+}
+
 export const LABEL_MAX = 80;
 export const ADDRESS_MAX = 60;
 
@@ -95,4 +112,15 @@ export function whyCannotPlace(
     if (itemHasShelfBelow) return "It contains a shelf, and shelves can't go inside shelves.";
   }
   return null;
+}
+
+/** Root-to-`id` path through an in-memory list of locations. */
+export function pathIn(locations: Location[], id: string): Location[] {
+  const byId = new Map(locations.map((l) => [l.id, l]));
+  const path: Location[] = [];
+  for (let at = byId.get(id); at; at = at.parentId ? byId.get(at.parentId) : undefined) {
+    path.unshift(at);
+    if (path.length > locations.length) break; // defensive: never loop on bad data
+  }
+  return path;
 }

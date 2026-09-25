@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// Scanning (the first tab) arrives in Phase 3. Until then, open on the tree.
+// The app opens on scanning, the everyday task (§7: Scan / Sections / Catalog).
 export default function Home() {
-  redirect("/sections");
+  redirect("/scan");
 }

@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "cloudflare-env.d.ts",
     // OpenNext build output.
     ".open-next/**",
+    // Service worker: plain browser JS, outside the Next/TS toolchain.
+    "public/sw.js",
     // Local wrangler state and dev bundles.
     ".wrangler/**",
   ]),

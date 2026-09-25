@@ -5,6 +5,8 @@ import { useActionState } from "react";
 import { moveLocationAction, type MoveState } from "../actions";
 
 type Props = {
+  /** Defaults to moving a location; the book move screen passes its own. */
+  action?: (state: MoveState, formData: FormData) => Promise<MoveState>;
   id: string;
   targetId: string | null;
   targetName: string;
@@ -13,11 +15,17 @@ type Props = {
   cancelHref: string;
 };
 
-export function MoveForm({ id, targetId, targetName, blocked, cancelHref }: Props) {
-  const [state, formAction, pending] = useActionState<MoveState, FormData>(
-    moveLocationAction,
-    { status: "idle" },
-  );
+export function MoveForm({
+  action = moveLocationAction,
+  id,
+  targetId,
+  targetName,
+  blocked,
+  cancelHref,
+}: Props) {
+  const [state, formAction, pending] = useActionState<MoveState, FormData>(action, {
+    status: "idle",
+  });
 
   return (
     <form action={formAction} className="flex flex-col gap-3">

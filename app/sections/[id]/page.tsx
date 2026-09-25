@@ -9,7 +9,10 @@ import {
   nearestAddressed,
   siteOf,
 } from "@/lib/locations";
+import { listCopiesAt } from "@/lib/copies";
 import { AddButton } from "../_components/add-button";
+import { BooksHere } from "../_components/books-here";
+import { ScanHereButton } from "../_components/scan-here-button";
 import { Breadcrumb } from "../_components/breadcrumb";
 import { KIND_LABEL, KindIcon } from "../_components/kind";
 import { ListHeader } from "../_components/list-header";
@@ -23,7 +26,7 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
   const location = path.at(-1);
   if (!location) notFound();
 
-  const children = await listChildren(id);
+  const [children, copies] = await Promise.all([listChildren(id), listCopiesAt(id)]);
   const site = siteOf(path);
   // No address of its own: say which addressed place it's inside, since
   // that's the answer a book logged here will give.
@@ -78,13 +81,20 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
           <ListHeader count={children.length} orderHref={`/sections/order?parent=${id}`} />
           <LocationList locations={children} />
         </>
-      ) : (
+      ) : copies.length === 0 ? (
         <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-muted">
           Nothing inside yet.
         </p>
-      )}
+      ) : null}
 
       {canAdd && <AddButton href={`/sections/new?parent=${id}`} label="Add inside" />}
+
+      {location.kind !== "site" && (
+        <>
+          <ScanHereButton id={id} />
+          <BooksHere copies={copies} />
+        </>
+      )}
     </main>
   );
 }

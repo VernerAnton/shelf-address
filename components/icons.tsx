@@ -90,3 +90,35 @@ export const ArrowDownIcon = (p: IconProps) => (
     <path d="M12 5v14M6 13l6 6 6-6" />
   </Icon>
 );
+
+export const CameraIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8a2 2 0 0 1 2-2h2l1.5-2h5L16 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8Z" />
+    <circle cx="12" cy="12.5" r="3.5" />
+  </Icon>
+);
+
+export const FlashlightIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 3h8l-1 5H9L8 3ZM9 8h6v3l-1 10h-4L9 11V8ZM12 13v2" />
+  </Icon>
+);
+
+export const CloudOffIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 3l18 18M8 7.3A6 6 0 0 1 17.7 11H18a3.5 3.5 0 0 1 2 6.4M16 18H7a4 4 0 0 1-1.7-7.6" />
+  </Icon>
+);
+
+export const CheckIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m5 12 5 5 9-10" />
+  </Icon>
+);
+
+export const ClockIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 7.5V12l3 2" />
+  </Icon>
+);

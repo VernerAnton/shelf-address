@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Shelf-Address app icon: a shelf of books, one of them found.
+       Full-bleed background so it also works as a maskable icon; everything
+       else sits inside the central 80% safe zone. -->
+  <rect width="512" height="512" fill="#1d5c8c"/>
+  <g transform="translate(0 22)">
+  <rect x="120" y="178" width="44" height="190" rx="4" fill="#e8dcc4"/>
+  <rect x="172" y="218" width="36" height="150" rx="4" fill="#c9b690"/>
+  <rect x="216" y="148" width="52" height="220" rx="4" fill="#f2b544"/>
+  <rect x="276" y="198" width="40" height="170" rx="4" fill="#e8dcc4"/>
+  <rect x="324" y="238" width="44" height="130" rx="4" fill="#c9b690"/>
+  <rect x="110" y="368" width="292" height="22" rx="5" fill="#f6f5f2"/>
+  <path d="M242 132c-4-9-26-31-26-50a26 26 0 0 1 52 0c0 19-22 41-26 50Z" fill="#ffffff"/>
+  <circle cx="242" cy="82" r="9" fill="#1d5c8c"/>
+  </g>
+</svg>

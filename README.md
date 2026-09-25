@@ -94,6 +94,22 @@ To add or remove someone later, edit that policy's email list. Per-version
 preview URLs are switched off in `wrangler.jsonc`, so the `workers.dev`
 address is the only way in.
 
+### Putting it on a phone's home screen
+
+The app is installable (a web app manifest plus icons), so it opens
+full-screen with its own icon, no browser bars.
+
+- **iPhone:** open the URL in **Safari** → **Share** → **Add to Home Screen**.
+- **Android:** open it in **Chrome** → **⋮** menu → **Install app** (or
+  **Add to Home screen**).
+
+It still needs a connection to work: there is no offline mode (spec §8,
+open item #7).
+
+With Cloudflare Access on, the login lasts for the Access *session duration*
+(default 24 hours) before a new email code is needed. Lengthen it in Zero
+Trust → Access → Applications → the app → session duration.
+
 ### Optional: deploy automatically on every push
 
 `.github/workflows/deploy.yml` deploys `main` to Cloudflare on push. It stays

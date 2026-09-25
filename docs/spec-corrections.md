@@ -107,3 +107,12 @@ Implemented in `migrations/0002_locator_only.sql`.
 Inside a shelf, only sections can be added. A shelf's instructions panel
 (§3) covers its whole subtree; a shelf inside a shelf would make it
 ambiguous which panel applies. Enforced by the app; the schema permits it.
+
+## 8. Offline scanning is needed — build it later.
+
+**Resolves:** §8 open item #7 and §9 item 7.
+
+Signal at the warehouse is unreliable, so a local scan queue is worth
+building: scans made without a connection are kept on the phone and uploaded
+once it returns. Deferred by choice — not part of Phase 2 — but it should be
+designed into Phase 3 (scanning) rather than bolted on afterwards.

@@ -80,27 +80,51 @@ allows(
 // --- §4 addressing ---------------------------------------------------------
 allows(
   "a shelf with an address",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-1', 'n3', 'shelf', 'Wall unit', 'Bulevard 1')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-1', 'n3', 'shelf', 'Wall unit', 'Bulevard 1', 'bulevard 1')`,
 );
 rejects(
   "a duplicate address in the same site",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-dup', 'n3', 'shelf', 'Other', 'Bulevard 1')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-dup', 'n3', 'shelf', 'Other', 'Bulevard 1', 'bulevard 1')`,
 );
 rejects(
   "the same address reused in a different site (uniqueness is global)",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-dup2', 'site-wh', 'shelf', 'Other', 'Bulevard 1')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-dup2', 'site-wh', 'shelf', 'Other', 'Bulevard 1', 'bulevard 1')`,
 );
 rejects(
   "the same address in a different case",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-dup3', 'site-wh', 'shelf', 'Other', 'bulevard 1')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-dup3', 'site-wh', 'shelf', 'Other', 'bulevard 1', 'bulevard 1b')`,
+);
+allows(
+  "a Finnish address",
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-fi', 'site-wh', 'shelf', 'Hylly', 'Ääkkönen 2', 'ääkkönen 2')`,
+);
+rejects(
+  "the same Finnish address in a different case (NOCASE alone misses this; address_key catches it)",
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-fi2', 'site-wh', 'shelf', 'Hylly', 'ÄÄKKÖNEN 2', 'ääkkönen 2')`,
+);
+rejects(
+  "an address without its key",
+  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-nokey', 'site-wh', 'shelf', 'X', 'Torikatu 7')`,
+);
+rejects(
+  "a key without an address",
+  `INSERT INTO locations (id, parent_id, kind, label, address_key) VALUES ('sh-nokey2', 'site-wh', 'shelf', 'X', 'torikatu 7')`,
+);
+rejects(
+  "clearing an address but leaving its key behind",
+  `UPDATE locations SET address = NULL WHERE id = 'sh-fi'`,
+);
+allows(
+  "clearing an address together with its key",
+  `UPDATE locations SET address = NULL, address_key = NULL WHERE id = 'sh-fi'`,
 );
 rejects(
   "an address on a plain node",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('nd-addr', 'n3', 'node', 'Row', 'Bulevard 9')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('nd-addr', 'n3', 'node', 'Row', 'Bulevard 9', 'bulevard 9')`,
 );
 rejects(
   "an address on a site",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('st-addr', NULL, 'site', 'Site', 'Bulevard 8')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('st-addr', NULL, 'site', 'Site', 'Bulevard 8', 'bulevard 8')`,
 );
 allows(
   "many shelves with no address yet (UNIQUE permits repeated NULLs)",
@@ -110,7 +134,7 @@ allows(
 );
 allows(
   "a standalone shelf with no site above it (§2.1)",
-  `INSERT INTO locations (id, parent_id, kind, label, address) VALUES ('sh-orphan', NULL, 'shelf', 'Loose unit', 'Kauppatori 4')`,
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-orphan', NULL, 'shelf', 'Loose unit', 'Kauppatori 4', 'kauppatori 4')`,
 );
 
 // --- §3 instructions, §5 map ----------------------------------------------
@@ -167,8 +191,16 @@ rejects(
   `UPDATE copies SET location_id = 'site-store' WHERE id = 'c-1'`,
 );
 rejects(
-  "an unknown status",
-  `INSERT INTO copies (id, isbn13, location_id, status) VALUES ('c-bad2', '9789510366868', 'sh-1', 'lost')`,
+  "a price on a copy (dropped: locator, not a pricing tool)",
+  `INSERT INTO copies (id, isbn13, location_id, price) VALUES ('c-bad2', '9789510366868', 'sh-1', 12.5)`,
+);
+rejects(
+  "a stock status on a copy (dropped: the store's backend owns it)",
+  `INSERT INTO copies (id, isbn13, location_id, status) VALUES ('c-bad4', '9789510366868', 'sh-1', 'sold')`,
+);
+allows(
+  "a condition on a copy",
+  `INSERT INTO copies (id, isbn13, location_id, condition) VALUES ('c-6', '9789510366868', 'sh-1', 'torn dust jacket')`,
 );
 rejects(
   "a copy pointing at an ISBN with no cached edition",
@@ -182,10 +214,8 @@ rejects(
 // --- defaults --------------------------------------------------------------
 {
   const row = db
-    .prepare("SELECT status, added_at FROM copies c WHERE c.id = 'c-1'")
+    .prepare("SELECT added_at FROM copies c WHERE c.id = 'c-1'")
     .get();
-  if (row.status !== "in_stock") failures.push(`status should default to in_stock, got ${row.status}`);
-  else passed++;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(row.added_at))
     failures.push(`added_at should default to an ISO-8601 UTC string, got ${row.added_at}`);
   else passed++;

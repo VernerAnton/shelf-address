@@ -1,0 +1,370 @@
+import { getDb } from "@/lib/cloudflare";
+import { addressKey, cleanAddress, isSimilarAddress } from "@/lib/address";
+import {
+  allowedChildKinds,
+  type AddressHolder,
+  type AddressedShelf,
+  type Location,
+  type LocationKind,
+  type LocationWithCounts,
+} from "@/lib/location-model";
+
+export * from "@/lib/location-model";
+
+/**
+ * Location tree data access. Spec §2.1, §4, and docs/spec-corrections.md.
+ *
+ * The database enforces the structural rules (a site is always a root,
+ * addresses are shelf-only and unique, ...). This module adds the rules that
+ * need knowledge of the rest of the tree, and turns constraint failures into
+ * answers a person can act on.
+ */
+
+
+type LocationRow = {
+  id: string;
+  parent_id: string | null;
+  kind: LocationKind;
+  label: string;
+  address: string | null;
+  sort_order: number;
+};
+
+const COLUMNS = "id, parent_id, kind, label, address, sort_order";
+
+function toLocation(row: LocationRow): Location {
+  return {
+    id: row.id,
+    parentId: row.parent_id,
+    kind: row.kind,
+    label: row.label,
+    address: row.address,
+    sortOrder: row.sort_order,
+  };
+}
+
+const collator = new Intl.Collator("fi", { numeric: true, sensitivity: "base" });
+
+const KIND_ORDER: Record<LocationKind, number> = { site: 0, shelf: 1, node: 1 };
+
+/**
+ * Explicit sort_order first, then sites before everything else, then label in
+ * natural order — "Section 2" before "Section 10".
+ */
+function byDisplayOrder(a: Location, b: Location): number {
+  return (
+    a.sortOrder - b.sortOrder ||
+    KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
+    collator.compare(a.label, b.label)
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Reads
+// ---------------------------------------------------------------------------
+
+export async function getLocation(id: string): Promise<Location | null> {
+  const db = await getDb();
+  const row = await db
+    .prepare(`SELECT ${COLUMNS} FROM locations WHERE id = ?`)
+    .bind(id)
+    .first<LocationRow>();
+  return row ? toLocation(row) : null;
+}
+
+/** The path from the root down to and including `id`. Empty if not found. */
+export async function getPath(id: string): Promise<Location[]> {
+  const db = await getDb();
+  const { results } = await db
+    .prepare(
+      `WITH RECURSIVE path(id, depth) AS (
+         SELECT id, 0 FROM locations WHERE id = ?
+         UNION ALL
+         SELECT l.parent_id, path.depth + 1
+         FROM path JOIN locations l ON l.id = path.id
+         WHERE l.parent_id IS NOT NULL
+       )
+       SELECT ${COLUMNS.split(", ").map((c) => `l.${c}`).join(", ")}
+       FROM path JOIN locations l ON l.id = path.id
+       ORDER BY path.depth DESC`,
+    )
+    .bind(id)
+    .all<LocationRow>();
+  return results.map(toLocation);
+}
+
+/** Direct children of `parentId`, or the roots when `parentId` is null. */
+export async function listChildren(
+  parentId: string | null,
+): Promise<LocationWithCounts[]> {
+  const db = await getDb();
+  const where = parentId === null ? "l.parent_id IS NULL" : "l.parent_id = ?";
+  const statement = db.prepare(
+    `SELECT ${COLUMNS.split(", ").map((c) => `l.${c}`).join(", ")},
+       (SELECT COUNT(*) FROM locations c WHERE c.parent_id = l.id) AS child_count,
+       (SELECT COUNT(*) FROM copies p WHERE p.location_id = l.id) AS copy_count
+     FROM locations l
+     WHERE ${where}`,
+  );
+  const { results } = await (parentId === null
+    ? statement
+    : statement.bind(parentId)
+  ).all<LocationRow & { child_count: number; copy_count: number }>();
+
+  return results
+    .map((row) => ({
+      ...toLocation(row),
+      childCount: row.child_count,
+      copyCount: row.copy_count,
+    }))
+    .sort(byDisplayOrder);
+}
+
+/** Every shelf that has an address, A–Z by address. */
+export async function listAddressedShelves(): Promise<AddressedShelf[]> {
+  const db = await getDb();
+  const { results } = await db
+    .prepare(
+      `WITH RECURSIVE up(shelf_id, cur_id, cur_parent) AS (
+         SELECT id, id, parent_id FROM locations WHERE address IS NOT NULL
+         UNION ALL
+         SELECT up.shelf_id, l.id, l.parent_id
+         FROM up JOIN locations l ON l.id = up.cur_parent
+       )
+       SELECT s.id, s.label, s.address,
+              CASE WHEN r.kind = 'site' THEN r.label END AS site_label
+       FROM up
+       JOIN locations s ON s.id = up.shelf_id
+       JOIN locations r ON r.id = up.cur_id
+       WHERE up.cur_parent IS NULL`,
+    )
+    .all<{ id: string; label: string; address: string; site_label: string | null }>();
+
+  return results
+    .map((row) => ({
+      id: row.id,
+      label: row.label,
+      address: row.address,
+      siteLabel: row.site_label,
+    }))
+    .sort((a, b) => collator.compare(a.address, b.address));
+}
+
+/** True if any location in the subtree strictly below `id` is a shelf. */
+async function hasShelfBelow(id: string): Promise<boolean> {
+  const db = await getDb();
+  const row = await db
+    .prepare(
+      `WITH RECURSIVE below(id) AS (
+         SELECT id FROM locations WHERE parent_id = ?
+         UNION ALL
+         SELECT l.id FROM locations l JOIN below ON l.parent_id = below.id
+       )
+       SELECT 1 AS found FROM below JOIN locations l ON l.id = below.id
+       WHERE l.kind = 'shelf' LIMIT 1`,
+    )
+    .bind(id)
+    .first<{ found: number }>();
+  return row !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
+
+export type AddressCheck =
+  | { status: "free" }
+  | { status: "taken"; holder: AddressHolder }
+  | { status: "similar"; matches: AddressHolder[] };
+
+/**
+ * §4 save-time check. `taken` means another shelf holds exactly this address
+ * (hard stop unless the person confirms moving it); `similar` means it looks
+ * like an existing address written differently (soft warning).
+ */
+export async function checkAddress(
+  address: string,
+  excludeId: string | null,
+): Promise<AddressCheck> {
+  const key = addressKey(address);
+  const others = (await listAddressedShelves()).filter((s) => s.id !== excludeId);
+
+  const exact = others.find((s) => addressKey(s.address) === key);
+  if (exact) return { status: "taken", holder: exact };
+
+  const matches = others.filter((s) => isSimilarAddress(key, addressKey(s.address)));
+  if (matches.length > 0) return { status: "similar", matches };
+
+  return { status: "free" };
+}
+
+export class LocationError extends Error {}
+
+// ---------------------------------------------------------------------------
+// Writes
+// ---------------------------------------------------------------------------
+
+export type LocationInput = {
+  label: string;
+  kind: LocationKind;
+  address: string | null;
+};
+
+/**
+ * Statements that release `address` from whichever shelf currently holds it.
+ * Run in the same batch as the write that claims it, so the address is never
+ * on two shelves and never lost if the write fails. docs/spec-corrections.md §2.
+ */
+function releaseAddress(db: D1Database, address: string, keepId: string | null) {
+  return db
+    .prepare(
+      `UPDATE locations SET address = NULL, address_key = NULL
+       WHERE address_key = ? AND id IS NOT ?`,
+    )
+    .bind(addressKey(address), keepId);
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
+}
+
+export async function createLocation(
+  parentId: string | null,
+  input: LocationInput,
+  options: { takeAddress: boolean },
+): Promise<string> {
+  const db = await getDb();
+  const path = parentId ? await getPath(parentId) : [];
+  if (parentId && path.length === 0) {
+    throw new LocationError("The place you were adding to no longer exists.");
+  }
+  if (!allowedChildKinds(path).includes(input.kind)) {
+    throw new LocationError("That kind of location can't go here.");
+  }
+
+  const id = crypto.randomUUID();
+  const address = input.kind === "shelf" && input.address ? cleanAddress(input.address) : null;
+
+  const maxOrder = await db
+    .prepare(
+      parentId === null
+        ? "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id IS NULL"
+        : "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id = ?",
+    )
+    .bind(...(parentId === null ? [] : [parentId]))
+    .first<{ n: number }>();
+  // New entries go last among any explicitly ordered siblings, but share the
+  // default order (0) until someone orders them, so natural label order holds.
+  const sortOrder = maxOrder?.n ? maxOrder.n + 1 : 0;
+
+  const insert = db
+    .prepare(
+      `INSERT INTO locations (id, parent_id, kind, label, address, address_key, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      parentId,
+      input.kind,
+      input.label,
+      address,
+      address ? addressKey(address) : null,
+      sortOrder,
+    );
+
+  try {
+    if (address && options.takeAddress) {
+      await db.batch([releaseAddress(db, address, null), insert]);
+    } else {
+      await insert.run();
+    }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new LocationError("That address was just taken by another shelf. Try saving again.");
+    }
+    throw error;
+  }
+  return id;
+}
+
+export async function updateLocation(
+  id: string,
+  input: LocationInput,
+  options: { takeAddress: boolean },
+): Promise<void> {
+  const db = await getDb();
+  const path = await getPath(id);
+  const current = path.at(-1);
+  if (!current) throw new LocationError("This location no longer exists.");
+
+  if (current.kind !== input.kind) {
+    if (current.kind === "site" || input.kind === "site") {
+      throw new LocationError("A site can't be turned into anything else, or vice versa.");
+    }
+    if (input.kind === "shelf") {
+      if (path.slice(0, -1).some((l) => l.kind === "shelf")) {
+        throw new LocationError("This is already inside a shelf, so it can't be a shelf itself.");
+      }
+      if (await hasShelfBelow(id)) {
+        throw new LocationError("There's a shelf further inside this one, so it can't be a shelf itself.");
+      }
+    }
+  }
+
+  const address = input.kind === "shelf" && input.address ? cleanAddress(input.address) : null;
+
+  // Turning a shelf into a section drops its shelf-only fields (§3, §4).
+  const update = db
+    .prepare(
+      `UPDATE locations
+       SET kind = ?, label = ?, address = ?, address_key = ?,
+           instructions = CASE WHEN ? = 'shelf' THEN instructions END
+       WHERE id = ?`,
+    )
+    .bind(input.kind, input.label, address, address ? addressKey(address) : null, input.kind, id);
+
+  try {
+    if (address && options.takeAddress) {
+      await db.batch([releaseAddress(db, address, id), update]);
+    } else {
+      await update.run();
+    }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new LocationError("That address was just taken by another shelf. Try saving again.");
+    }
+    throw error;
+  }
+}
+
+/**
+ * Deletes a location. Refuses if anything is inside it or shelved at it —
+ * deleting is never allowed to silently take other entries with it.
+ */
+export async function deleteLocation(id: string): Promise<{ parentId: string | null }> {
+  const db = await getDb();
+  const row = await db
+    .prepare(
+      `SELECT parent_id,
+         (SELECT COUNT(*) FROM locations c WHERE c.parent_id = l.id) AS child_count,
+         (SELECT COUNT(*) FROM copies p WHERE p.location_id = l.id) AS copy_count
+       FROM locations l WHERE id = ?`,
+    )
+    .bind(id)
+    .first<{ parent_id: string | null; child_count: number; copy_count: number }>();
+
+  if (!row) throw new LocationError("This location no longer exists.");
+  if (row.child_count > 0) {
+    throw new LocationError(
+      `There ${row.child_count === 1 ? "is 1 place" : `are ${row.child_count} places`} inside this. Delete or empty those first.`,
+    );
+  }
+  if (row.copy_count > 0) {
+    throw new LocationError(
+      `${row.copy_count === 1 ? "1 book is" : `${row.copy_count} books are`} logged here. Move them first.`,
+    );
+  }
+
+  await db.prepare("DELETE FROM locations WHERE id = ?").bind(id).run();
+  return { parentId: row.parent_id };
+}

@@ -8,9 +8,10 @@ spec in [`docs/spec.md`](docs/spec.md); decisions taken since the spec was
 written are in [`docs/spec-corrections.md`](docs/spec-corrections.md) and
 override it where they conflict.
 
-**Status: Phase 1 (scaffold) complete.** The app builds for Cloudflare Workers,
-the database schema from §2 is written and verified, and both bindings resolve.
-There is no UI beyond a bindings health page yet.
+**Status: Phase 2 (location tree) complete.** Live at
+<https://shelf-address.verner-sdr.workers.dev>. Sites, shelves and sections can
+be added, edited, browsed and deleted, and shelf addresses are enforced unique
+across every site. Scanning (Phase 3) and lookup (Phase 4) are not built yet.
 
 ## Stack
 
@@ -113,6 +114,7 @@ npm run preview            # http://localhost:8787
 | `npm run deploy` | Build and deploy to Cloudflare |
 | `npm run typecheck` | TypeScript, no emit |
 | `npm run lint` | ESLint |
+| `npm test` | Unit tests (address rules) |
 | `npm run db:verify` | Assert the schema enforces the spec's rules |
 | `npm run db:migrate:local` | Apply migrations to the local database |
 | `npm run db:migrate:remote` | Apply migrations to the Cloudflare database |
@@ -125,9 +127,13 @@ is generated, not hand-written.
 ## Layout
 
 ```
-app/                  Next.js App Router pages
+app/sections/          location tree: drill-down, A–Z, add/edit forms
+app/sections/actions.ts   Server Actions behind the forms
+app/status/           bindings health check
 lib/cloudflare.ts     getDb() / getBucket() — the binding accessors
-lib/health.ts         bindings health check behind the placeholder page
+lib/locations.ts      location tree queries and writes
+lib/location-model.ts types and tree rules, safe for client code
+lib/address.ts        address normalising, uniqueness key, near-miss check
 migrations/           D1 schema, applied in filename order
 scripts/verify-schema.mjs   schema rule assertions (npm run db:verify)
 wrangler.jsonc        Worker name, bindings, compatibility date
@@ -144,8 +150,9 @@ docs/                 design spec and decisions taken since
 Rules the spec calls DECIDED are enforced by the database itself rather than
 left to application code — a site is always a root, `address` and
 `instructions` belong to shelves only, the reference map belongs to sites only,
-a copy can never be shelved directly at a site, and `address` is unique across
-every site, case-insensitively. `npm run db:verify` asserts all of this against
+a copy can never be shelved directly at a site, and every address is unique
+across every site (on `address_key`, which folds case including Ä/Ö/Å).
+Copies carry no price or stock status — see `docs/spec-corrections.md` §4. `npm run db:verify` asserts all of this against
 a throwaway database; it runs in CI on every push.
 
 Migrations are append-only. To change the schema, add `0002_*.sql` — never edit

@@ -21,6 +21,7 @@ jobs:
 
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm test
 
       # Asserts the schema still enforces the rules the spec calls DECIDED.
       - run: npm run db:verify

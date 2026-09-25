@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { addressKey } from "@/lib/address";
 import {
   ADDRESS_MAX,
+  canHaveAddress,
+  requiresAddress,
   LABEL_MAX,
   LocationError,
   checkAddress,
@@ -61,10 +63,13 @@ async function validate(
   if (values.label.length > LABEL_MAX) {
     return { status: "error", message: `Keep the name under ${LABEL_MAX} characters.`, values };
   }
-  if (values.kind !== "shelf") return null;
+  if (!canHaveAddress(values.kind)) return null;
 
   if (!values.address) {
-    return { status: "error", message: "A shelf needs an address.", values };
+    if (requiresAddress(values.kind)) {
+      return { status: "error", message: "A shelf needs an address.", values };
+    }
+    return null; // a section's address is optional
   }
   if (values.address.length > ADDRESS_MAX) {
     return { status: "error", message: `Keep the address under ${ADDRESS_MAX} characters.`, values };

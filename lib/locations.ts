@@ -2,9 +2,10 @@ import { getDb } from "@/lib/cloudflare";
 import { addressKey, cleanAddress, isSimilarAddress } from "@/lib/address";
 import {
   allowedChildKinds,
+  canHaveAddress,
   whyCannotPlace,
   type AddressHolder,
-  type AddressedShelf,
+  type AddressedPlace,
   type Location,
   type LocationKind,
   type LocationWithCounts,
@@ -121,8 +122,8 @@ export async function listChildren(
     .sort(byDisplayOrder);
 }
 
-/** Every shelf that has an address, A–Z by address. */
-export async function listAddressedShelves(): Promise<AddressedShelf[]> {
+/** Every shelf and section that has an address, A–Z by address. */
+export async function listAddressedPlaces(): Promise<AddressedPlace[]> {
   const db = await getDb();
   const { results } = await db
     .prepare(
@@ -132,18 +133,25 @@ export async function listAddressedShelves(): Promise<AddressedShelf[]> {
          SELECT up.shelf_id, l.id, l.parent_id
          FROM up JOIN locations l ON l.id = up.cur_parent
        )
-       SELECT s.id, s.label, s.address,
+       SELECT s.id, s.kind, s.label, s.address,
               CASE WHEN r.kind = 'site' THEN r.label END AS site_label
        FROM up
        JOIN locations s ON s.id = up.shelf_id
        JOIN locations r ON r.id = up.cur_id
        WHERE up.cur_parent IS NULL`,
     )
-    .all<{ id: string; label: string; address: string; site_label: string | null }>();
+    .all<{
+      id: string;
+      kind: LocationKind;
+      label: string;
+      address: string;
+      site_label: string | null;
+    }>();
 
   return results
     .map((row) => ({
       id: row.id,
+      kind: row.kind,
       label: row.label,
       address: row.address,
       siteLabel: row.site_label,
@@ -179,16 +187,16 @@ export type AddressCheck =
   | { status: "similar"; matches: AddressHolder[] };
 
 /**
- * §4 save-time check. `taken` means another shelf holds exactly this address
- * (hard stop unless the person confirms moving it); `similar` means it looks
- * like an existing address written differently (soft warning).
+ * §4 save-time check. `taken` means another shelf or section holds exactly
+ * this address (hard stop unless the person confirms moving it); `similar`
+ * means it looks like an existing address written differently (soft warning).
  */
 export async function checkAddress(
   address: string,
   excludeId: string | null,
 ): Promise<AddressCheck> {
   const key = addressKey(address);
-  const others = (await listAddressedShelves()).filter((s) => s.id !== excludeId);
+  const others = (await listAddressedPlaces()).filter((s) => s.id !== excludeId);
 
   const exact = others.find((s) => addressKey(s.address) === key);
   if (exact) return { status: "taken", holder: exact };
@@ -262,7 +270,7 @@ export async function createLocation(
   }
 
   const id = crypto.randomUUID();
-  const address = input.kind === "shelf" && input.address ? cleanAddress(input.address) : null;
+  const address = canHaveAddress(input.kind) && input.address ? cleanAddress(input.address) : null;
 
   const sortOrder = await nextSortOrder(db, parentId);
 
@@ -320,9 +328,10 @@ export async function updateLocation(
     }
   }
 
-  const address = input.kind === "shelf" && input.address ? cleanAddress(input.address) : null;
+  const address = canHaveAddress(input.kind) && input.address ? cleanAddress(input.address) : null;
 
-  // Turning a shelf into a section drops its shelf-only fields (§3, §4).
+  // Turning a shelf into a section keeps its address but drops the
+  // shelf-only instructions panel (§3).
   const update = db
     .prepare(
       `UPDATE locations

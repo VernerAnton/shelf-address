@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useActionState, useEffect, useId, useRef, useState } from "react";
 import { WarningIcon } from "@/components/icons";
 import { displayAddress } from "@/lib/address";
-import { ADDRESS_MAX, LABEL_MAX, type AddressHolder, type LocationKind } from "@/lib/location-model";
+import {
+  ADDRESS_MAX,
+  LABEL_MAX,
+  canHaveAddress,
+  requiresAddress,
+  type AddressHolder,
+  type LocationKind,
+} from "@/lib/location-model";
 import type { FormValues, LocationFormState } from "../actions";
 import { KIND_HINT, KIND_LABEL, KindIcon } from "./kind";
 
@@ -16,12 +23,11 @@ type Props = {
   initial: FormValues;
   submitLabel: string;
   cancelHref: string;
-  /** Shown when switching an existing shelf to a section. */
-  wasShelf?: boolean;
 };
 
 function holderLine(holder: AddressHolder) {
-  return `${displayAddress(holder.address, holder.siteLabel)} (shelf “${holder.label}”)`;
+  const kind = KIND_LABEL[holder.kind].toLowerCase();
+  return `${displayAddress(holder.address, holder.siteLabel)} (${kind} “${holder.label}”)`;
 }
 
 export function LocationForm({
@@ -31,7 +37,6 @@ export function LocationForm({
   initial,
   submitLabel,
   cancelHref,
-  wasShelf = false,
 }: Props) {
   const id = useId();
   const [state, formAction, pending] = useActionState(action, { status: "idle" });
@@ -55,7 +60,8 @@ export function LocationForm({
   const warningStillApplies =
     (state.status === "taken" || state.status === "similar") &&
     state.values.address === address &&
-    kind === "shelf";
+    canHaveAddress(kind);
+  const addressRequired = requiresAddress(kind);
 
   return (
     <form action={formAction} className="flex flex-col gap-6">
@@ -121,10 +127,11 @@ export function LocationForm({
         />
       </label>
 
-      {kind === "shelf" && (
+      {canHaveAddress(kind) && (
         <div className="flex flex-col gap-1.5">
           <label htmlFor={`${id}-address`} className="text-sm font-medium">
             Address
+            {!addressRequired && <span className="font-normal text-muted"> (optional)</span>}
           </label>
           <input
             id={`${id}-address`}
@@ -132,7 +139,7 @@ export function LocationForm({
             name="address"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            required
+            required={addressRequired}
             maxLength={ADDRESS_MAX}
             autoComplete="off"
             autoCapitalize="words"
@@ -140,16 +147,12 @@ export function LocationForm({
             className="h-12 rounded-xl border border-line bg-surface px-3 text-base outline-none focus:border-accent"
           />
           <p id={`${id}-address-hint`} className="text-sm text-muted">
+            {!addressRequired &&
+              "Give it one if it's a spot you'd walk to, like a table or a corner. "}
             Unique across every site. Don&apos;t include the site name — it&apos;s added
             automatically when the address is shown.
           </p>
         </div>
-      )}
-
-      {wasShelf && kind === "node" && (
-        <p className="rounded-xl border border-warn-line bg-warn-bg p-3 text-sm text-warn-text">
-          As a section it loses its address and its instructions.
-        </p>
       )}
 
       <div ref={feedbackRef} className="flex flex-col gap-6 empty:hidden">

@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { allowedChildKinds, whyCannotPlace, type Location } from "@/lib/location-model";
+import {
+  allowedChildKinds,
+  canHaveAddress,
+  nearestAddressed,
+  requiresAddress,
+  whyCannotPlace,
+  type Location,
+} from "@/lib/location-model";
 
 const loc = (id: string, kind: Location["kind"], parentId: string | null = null): Location => ({
   id,
@@ -57,5 +64,37 @@ describe("whyCannotPlace", () => {
     const box = loc("box", "node", "store");
     expect(whyCannotPlace(box, true, [store, room, shelf])).not.toBeNull();
     expect(whyCannotPlace(box, false, [store, room, shelf])).toBeNull();
+  });
+});
+
+describe("nearestAddressed", () => {
+  const addressed = (l: Location, address: string): Location => ({ ...l, address });
+
+  it("uses the place's own address when it has one", () => {
+    const corner = addressed(loc("corner", "node", "store"), "Torikatu 3");
+    expect(nearestAddressed([store, corner])?.id).toBe("corner");
+  });
+
+  it("falls back to the nearest addressed place above", () => {
+    const wall = addressed(shelf, "Bulevard 1");
+    expect(nearestAddressed([store, room, wall, row])?.id).toBe("shelf");
+  });
+
+  it("prefers the closest of several addressed ancestors", () => {
+    const hall = addressed(room, "Bulevard");
+    const wall = addressed(shelf, "Bulevard 1");
+    expect(nearestAddressed([store, hall, wall, row])?.id).toBe("shelf");
+  });
+
+  it("is null when nothing on the way up has an address", () => {
+    expect(nearestAddressed([store, room])).toBeNull();
+  });
+});
+
+describe("addresses by kind", () => {
+  it("requires one on shelves, allows one on sections, never on sites", () => {
+    expect([requiresAddress("shelf"), canHaveAddress("shelf")]).toEqual([true, true]);
+    expect([requiresAddress("node"), canHaveAddress("node")]).toEqual([false, true]);
+    expect([requiresAddress("site"), canHaveAddress("site")]).toEqual([false, false]);
   });
 });

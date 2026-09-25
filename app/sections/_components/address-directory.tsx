@@ -2,11 +2,15 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { ChevronRightIcon, ShelfIcon } from "@/components/icons";
-import type { AddressedShelf } from "@/lib/location-model";
+import { ChevronRightIcon } from "@/components/icons";
+import type { AddressedPlace } from "@/lib/location-model";
+import { KindIcon } from "./kind";
 
-/** §7 open item #6, confirmed: every shelf address across all sites, A–Z. */
-export function AddressDirectory({ shelves }: { shelves: AddressedShelf[] }) {
+/**
+ * §7 open item #6, confirmed: every address across all sites, A–Z — shelves
+ * and, since spec-corrections §9, sections that have one.
+ */
+export function AddressDirectory({ shelves }: { shelves: AddressedPlace[] }) {
   const [query, setQuery] = useState("");
 
   const visible = useMemo(() => {
@@ -37,7 +41,7 @@ export function AddressDirectory({ shelves }: { shelves: AddressedShelf[] }) {
                 href={`/sections/${shelf.id}`}
                 className="flex min-h-14 items-center gap-3 px-4 py-3 active:bg-line/50"
               >
-                <ShelfIcon className="size-5 shrink-0 text-muted" />
+                <KindIcon kind={shelf.kind} className="size-5 shrink-0 text-muted" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-semibold">{shelf.address}</span>
                   <span className="block truncate text-sm text-muted">

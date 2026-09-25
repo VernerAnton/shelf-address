@@ -118,9 +118,13 @@ allows(
   "clearing an address together with its key",
   `UPDATE locations SET address = NULL, address_key = NULL WHERE id = 'sh-fi'`,
 );
+allows(
+  "an address on a section (spec-corrections §9)",
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('nd-addr', 'n3', 'node', 'Kids corner', 'Bulevard 9', 'bulevard 9')`,
+);
 rejects(
-  "an address on a plain node",
-  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('nd-addr', 'n3', 'node', 'Row', 'Bulevard 9', 'bulevard 9')`,
+  "a section reusing a shelf's address (one pool for both)",
+  `INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('nd-dup', 'n3', 'node', 'Table', 'Bulevard 1', 'bulevard 1')`,
 );
 rejects(
   "an address on a site",
@@ -219,6 +223,55 @@ rejects(
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(row.added_at))
     failures.push(`added_at should default to an ISO-8601 UTC string, got ${row.added_at}`);
   else passed++;
+}
+
+// --- 0003 over existing data ----------------------------------------------
+// 0003 rebuilds `locations`, which other rows point at. Replay history up to
+// 0002, add data shaped like production's (nested places, an address, books
+// logged at a shelf), then apply 0003 the way D1 does — one transaction — and
+// check nothing was lost or left dangling.
+{
+  const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
+  const before = files.filter((f) => f < "0003");
+  const rebuild = files.find((f) => f.startsWith("0003"));
+  const old = new DatabaseSync(":memory:");
+  old.exec("PRAGMA foreign_keys = ON;");
+  for (const f of before) old.exec(readFileSync(join(MIGRATIONS, f), "utf8"));
+  old.exec(`
+    INSERT INTO locations (id, parent_id, kind, label) VALUES ('s', NULL, 'site', 'Store');
+    INSERT INTO locations (id, parent_id, kind, label) VALUES ('r', 's', 'node', 'Room');
+    INSERT INTO locations (id, parent_id, kind, label, address, address_key, instructions)
+      VALUES ('sh', 'r', 'shelf', 'Wall', 'Bulevard 1', 'bulevard 1', '{"how":"by publisher"}');
+    INSERT INTO locations (id, parent_id, kind, label, sort_order) VALUES ('row', 'sh', 'node', 'Row 2', 3);
+    INSERT INTO editions (isbn13, title) VALUES ('9789510366868', 'Sinuhe');
+    INSERT INTO copies (id, isbn13, location_id, condition) VALUES ('c1', '9789510366868', 'row', 'good');
+  `);
+  // Column order may change in a rebuild; compare values by column name.
+  const snapshot = (d) =>
+    JSON.stringify(
+      d.prepare("SELECT * FROM locations ORDER BY id").all().map((row) =>
+        Object.fromEntries(Object.entries(row).sort(([a], [b]) => a.localeCompare(b))),
+      ),
+    ) + JSON.stringify(d.prepare("SELECT * FROM copies ORDER BY id").all());
+  const beforeRows = snapshot(old);
+  try {
+    old.exec(`BEGIN; ${readFileSync(join(MIGRATIONS, rebuild), "utf8")} COMMIT;`);
+    passed++;
+  } catch (error) {
+    failures.push(`0003 applies over existing data — ${error.message}`);
+  }
+  const afterRows = snapshot(old);
+  if (afterRows !== beforeRows) failures.push(`0003 changed existing rows:\n  ${beforeRows}\n  ${afterRows}`);
+  else passed++;
+  const dangling = old.prepare("PRAGMA foreign_key_check").all();
+  if (dangling.length) failures.push(`0003 left broken references: ${JSON.stringify(dangling)}`);
+  else passed++;
+  try {
+    old.exec(`INSERT INTO copies (id, location_id) VALUES ('c2', 's')`);
+    failures.push("after 0003, the no-copies-at-a-site trigger still fires — but it was accepted");
+  } catch {
+    passed++;
+  }
 }
 
 // --- report ----------------------------------------------------------------

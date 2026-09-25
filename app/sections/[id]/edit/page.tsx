@@ -47,7 +47,6 @@ export default async function EditLocationPage(props: PageProps<"/sections/[id]/
         }}
         submitLabel="Save"
         cancelHref={`/sections/${id}`}
-        wasShelf={location.kind === "shelf"}
       />
 
       {location.kind !== "site" && (

@@ -116,3 +116,26 @@ Signal at the warehouse is unreliable, so a local scan queue is worth
 building: scans made without a connection are kept on the phone and uploaded
 once it returns. Deferred by choice — not part of Phase 2 — but it should be
 designed into Phase 3 (scanning) rather than bolted on afterwards.
+
+## 9. Sections can have an address too.
+
+**Overrides:** §2.1's "address — shelf-only" and §4's framing of addresses as
+a shelf-only field.
+
+Sections are often a real spot in the store — a table, a corner — and a book
+logged there needs an answer to "where is this?". So:
+
+- **Shelves must have an address; sections may; sites never do.**
+- **One pool.** Shelf and section addresses share the same global uniqueness,
+  near-miss warning and move-it-here flow (§1–2, §5).
+- **Nearest address wins.** A place without its own address is found at the
+  nearest addressed place above it — "Row 2" inside shelf Bulevard 1 shows
+  "Inside Store — Bulevard 1". That's the answer a book logged there gives.
+- Switching a shelf to a section now keeps the address; only the shelf-only
+  instructions panel (§3) is dropped.
+- The A–Z list includes addressed sections.
+
+Implemented in `migrations/0003_section_addresses.sql`, which rebuilds
+`locations` (SQLite can't alter a CHECK constraint) without losing rows.
+Whether addressed sections should also get an instructions panel is open —
+decide in Phase 5.

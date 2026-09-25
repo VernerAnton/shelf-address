@@ -33,7 +33,7 @@ export function LocationList({ locations }: { locations: LocationWithCounts[] })
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
                   <span className="truncate font-medium">{location.label}</span>
-                  {location.kind === "shelf" && location.address && (
+                  {location.address && (
                     <span className="shrink-0 rounded bg-accent/10 px-1.5 py-0.5 text-xs font-semibold text-accent">
                       {location.address}
                     </span>

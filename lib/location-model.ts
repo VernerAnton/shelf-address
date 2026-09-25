@@ -19,16 +19,41 @@ export type LocationWithCounts = Location & {
   copyCount: number;
 };
 
-/** A shelf holding an address, with the site it sits under (if any). */
-export type AddressedShelf = {
+/** A shelf or section holding an address, with the site it sits under (if any). */
+export type AddressedPlace = {
   id: string;
+  kind: LocationKind;
   label: string;
   address: string;
   siteLabel: string | null;
 };
 
-/** A shelf somewhere else that already holds the address being saved. */
-export type AddressHolder = AddressedShelf;
+/** A place somewhere else that already holds the address being saved. */
+export type AddressHolder = AddressedPlace;
+
+/**
+ * Shelves must have an address (§4). Sections may, if they're a spot you'd
+ * walk to — a table, a corner (docs/spec-corrections.md §9). Sites never do.
+ */
+export function canHaveAddress(kind: LocationKind): boolean {
+  return kind !== "site";
+}
+
+export function requiresAddress(kind: LocationKind): boolean {
+  return kind === "shelf";
+}
+
+/**
+ * The address that answers "where is this?" for the last place in `path`:
+ * its own, or else the nearest one above it. A book logged in "Row 2" inside
+ * shelf "Bulevard 1" is found at Bulevard 1.
+ */
+export function nearestAddressed(path: Location[]): Location | null {
+  for (let i = path.length - 1; i >= 0; i--) {
+    if (path[i].address) return path[i];
+  }
+  return null;
+}
 
 export const LABEL_MAX = 80;
 export const ADDRESS_MAX = 60;

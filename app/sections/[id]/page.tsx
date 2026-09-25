@@ -2,7 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PencilIcon } from "@/components/icons";
 import { displayAddress } from "@/lib/address";
-import { allowedChildKinds, getPath, listChildren, siteOf } from "@/lib/locations";
+import {
+  allowedChildKinds,
+  getPath,
+  listChildren,
+  nearestAddressed,
+  siteOf,
+} from "@/lib/locations";
 import { AddButton } from "../_components/add-button";
 import { Breadcrumb } from "../_components/breadcrumb";
 import { KIND_LABEL, KindIcon } from "../_components/kind";
@@ -19,6 +25,9 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
 
   const children = await listChildren(id);
   const site = siteOf(path);
+  // No address of its own: say which addressed place it's inside, since
+  // that's the answer a book logged here will give.
+  const inside = location.address ? null : nearestAddressed(path.slice(0, -1));
   const canAdd = allowedChildKinds(path).length > 0;
 
   const crumbs = [
@@ -37,16 +46,23 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
             {KIND_LABEL[location.kind]}
           </p>
           <h1 className="text-2xl font-semibold tracking-tight break-words">{location.label}</h1>
-          {location.kind === "shelf" &&
-            (location.address ? (
-              <p className="mt-1 text-lg font-semibold text-accent">
-                {displayAddress(location.address, site?.label ?? null)}
-              </p>
-            ) : (
-              <p className="mt-1 text-sm text-danger">
-                No address — this shelf lost it to another one. Edit to give it a new one.
-              </p>
-            ))}
+          {location.address ? (
+            <p className="mt-1 text-lg font-semibold text-accent">
+              {displayAddress(location.address, site?.label ?? null)}
+            </p>
+          ) : location.kind === "shelf" ? (
+            <p className="mt-1 text-sm text-danger">
+              No address — this shelf lost it to another place. Edit to give it a new one.
+            </p>
+          ) : null}
+          {inside?.address && (
+            <p className="mt-1 text-sm text-muted">
+              Inside{" "}
+              <span className="font-semibold text-foreground">
+                {displayAddress(inside.address, site?.label ?? null)}
+              </span>
+            </p>
+          )}
         </div>
         <Link
           href={`/sections/${id}/edit`}

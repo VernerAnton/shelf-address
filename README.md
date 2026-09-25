@@ -189,7 +189,8 @@ docs/                 design spec and decisions taken since
 
 Rules the spec calls DECIDED are enforced by the database itself rather than
 left to application code — a site is always a root, `address` and
-`instructions` belong to shelves only, the reference map belongs to sites only,
+`instructions` belong to shelves only, sites never carry an address (shelves
+must, sections may), the reference map belongs to sites only,
 a copy can never be shelved directly at a site, and every address is unique
 across every site (on `address_key`, which folds case including Ä/Ö/Å).
 Copies carry no price or stock status — see `docs/spec-corrections.md` §4. `npm run db:verify` asserts all of this against

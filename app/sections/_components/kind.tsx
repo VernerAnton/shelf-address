@@ -12,7 +12,7 @@ export const KIND_LABEL: Record<LocationKind, string> = {
 export const KIND_HINT: Record<LocationKind, string> = {
   site: "The store, or a warehouse.",
   shelf: "A shelf or wall unit. Gets its own address.",
-  node: "Anything in between — a room, row, section, box.",
+  node: "Anything in between — a room, row, table, box. Can have its own address.",
 };
 
 const ICONS = { site: SiteIcon, shelf: ShelfIcon, node: NodeIcon } as const;

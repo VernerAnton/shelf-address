@@ -1,5 +1,6 @@
 "use server";
 
+import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { addressKey } from "@/lib/address";
 import {
@@ -10,6 +11,9 @@ import {
   createLocation,
   deleteLocation,
   getLocation,
+  moveLocation,
+  resetOrder,
+  shiftLocation,
   updateLocation,
   type AddressHolder,
   type LocationKind,
@@ -164,4 +168,34 @@ export async function deleteLocationAction(
     throw error;
   }
   redirect(hrefFor(parentId));
+}
+
+export type MoveState = { status: "idle" } | { status: "error"; message: string };
+
+export async function moveLocationAction(
+  _previous: MoveState,
+  formData: FormData,
+): Promise<MoveState> {
+  const id = String(formData.get("id") ?? "");
+  const targetId = String(formData.get("targetId") ?? "") || null;
+  try {
+    await moveLocation(id, targetId);
+  } catch (error) {
+    if (error instanceof LocationError) return { status: "error", message: error.message };
+    throw error;
+  }
+  redirect(hrefFor(id));
+}
+
+export async function shiftLocationAction(formData: FormData): Promise<void> {
+  const id = String(formData.get("id") ?? "");
+  const direction = formData.get("direction") === "up" ? "up" : "down";
+  await shiftLocation(id, direction);
+  refresh();
+}
+
+export async function resetOrderAction(formData: FormData): Promise<void> {
+  const parentId = String(formData.get("parentId") ?? "") || null;
+  await resetOrder(parentId);
+  refresh();
 }

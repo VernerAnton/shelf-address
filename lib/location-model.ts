@@ -48,3 +48,26 @@ export function allowedChildKinds(path: Location[]): LocationKind[] {
   if (path.some((l) => l.kind === "shelf")) return ["node"];
   return ["shelf", "node"];
 }
+
+/**
+ * Why `item` can't be moved under the location at the end of `targetPath`
+ * (the roots when `targetPath` is empty), or null if it can. The same rules as
+ * adding something new at that spot, plus the tree can't loop back on itself.
+ *
+ * `itemHasShelfBelow`: whether any shelf sits somewhere inside `item`.
+ */
+export function whyCannotPlace(
+  item: Pick<Location, "id" | "kind">,
+  itemHasShelfBelow: boolean,
+  targetPath: Location[],
+): string | null {
+  if (item.kind === "site") return "Sites always sit at the top level.";
+  if (targetPath.some((l) => l.id === item.id)) {
+    return "It can't go inside itself.";
+  }
+  if (targetPath.some((l) => l.kind === "shelf")) {
+    if (item.kind === "shelf") return "A shelf can't go inside another shelf.";
+    if (itemHasShelfBelow) return "It contains a shelf, and shelves can't go inside shelves.";
+  }
+  return null;
+}

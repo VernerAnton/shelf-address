@@ -6,6 +6,7 @@ import { allowedChildKinds, getPath, listChildren, siteOf } from "@/lib/location
 import { AddButton } from "../_components/add-button";
 import { Breadcrumb } from "../_components/breadcrumb";
 import { KIND_LABEL, KindIcon } from "../_components/kind";
+import { ListHeader } from "../_components/list-header";
 import { LocationList } from "../_components/location-list";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +58,10 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
       </header>
 
       {children.length > 0 ? (
-        <LocationList locations={children} />
+        <>
+          <ListHeader count={children.length} orderHref={`/sections/order?parent=${id}`} />
+          <LocationList locations={children} />
+        </>
       ) : (
         <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-muted">
           Nothing inside yet.

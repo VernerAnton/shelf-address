@@ -2,6 +2,7 @@ import { getDb } from "@/lib/cloudflare";
 import { addressKey, cleanAddress, isSimilarAddress } from "@/lib/address";
 import {
   allowedChildKinds,
+  whyCannotPlace,
   type AddressHolder,
   type AddressedShelf,
   type Location,
@@ -151,7 +152,7 @@ export async function listAddressedShelves(): Promise<AddressedShelf[]> {
 }
 
 /** True if any location in the subtree strictly below `id` is a shelf. */
-async function hasShelfBelow(id: string): Promise<boolean> {
+export async function hasShelfBelow(id: string): Promise<boolean> {
   const db = await getDb();
   const row = await db
     .prepare(
@@ -228,6 +229,24 @@ function isUniqueViolation(error: unknown): boolean {
   return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
 }
 
+/**
+ * Where a newcomer to `parentId`'s children goes. Until someone reorders a
+ * level, every entry there has sort_order 0 and the list shows in natural
+ * label order. Once reordered, entries are numbered 1..n and a newcomer goes
+ * last.
+ */
+async function nextSortOrder(db: D1Database, parentId: string | null): Promise<number> {
+  const row = await db
+    .prepare(
+      parentId === null
+        ? "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id IS NULL"
+        : "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id = ?",
+    )
+    .bind(...(parentId === null ? [] : [parentId]))
+    .first<{ n: number }>();
+  return row?.n ? row.n + 1 : 0;
+}
+
 export async function createLocation(
   parentId: string | null,
   input: LocationInput,
@@ -245,17 +264,7 @@ export async function createLocation(
   const id = crypto.randomUUID();
   const address = input.kind === "shelf" && input.address ? cleanAddress(input.address) : null;
 
-  const maxOrder = await db
-    .prepare(
-      parentId === null
-        ? "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id IS NULL"
-        : "SELECT COALESCE(MAX(sort_order), 0) AS n FROM locations WHERE parent_id = ?",
-    )
-    .bind(...(parentId === null ? [] : [parentId]))
-    .first<{ n: number }>();
-  // New entries go last among any explicitly ordered siblings, but share the
-  // default order (0) until someone orders them, so natural label order holds.
-  const sortOrder = maxOrder?.n ? maxOrder.n + 1 : 0;
+  const sortOrder = await nextSortOrder(db, parentId);
 
   const insert = db
     .prepare(
@@ -367,4 +376,67 @@ export async function deleteLocation(id: string): Promise<{ parentId: string | n
 
   await db.prepare("DELETE FROM locations WHERE id = ?").bind(id).run();
   return { parentId: row.parent_id };
+}
+
+/**
+ * Moves `id` (and everything inside it, and every book logged there) under
+ * `targetId`, or to the top level when `targetId` is null. The address, if
+ * any, stays with the shelf; its displayed site follows the new position.
+ */
+export async function moveLocation(id: string, targetId: string | null): Promise<void> {
+  const db = await getDb();
+  const item = await getLocation(id);
+  if (!item) throw new LocationError("This location no longer exists.");
+
+  const targetPath = targetId ? await getPath(targetId) : [];
+  if (targetId && targetPath.length === 0) {
+    throw new LocationError("The place you were moving it to no longer exists.");
+  }
+  if (item.parentId === targetId) return;
+
+  const reason = whyCannotPlace(item, await hasShelfBelow(id), targetPath);
+  if (reason) throw new LocationError(reason);
+
+  await db
+    .prepare("UPDATE locations SET parent_id = ?, sort_order = ? WHERE id = ?")
+    .bind(targetId, await nextSortOrder(db, targetId), id)
+    .run();
+}
+
+/**
+ * Moves `id` one place up or down among its siblings. The first time a level
+ * is reordered, its current on-screen order is written out as 1..n, so the
+ * swap starts from exactly what the person was looking at.
+ */
+export async function shiftLocation(id: string, direction: "up" | "down"): Promise<void> {
+  const db = await getDb();
+  const item = await getLocation(id);
+  if (!item) throw new LocationError("This location no longer exists.");
+
+  const siblings = await listChildren(item.parentId);
+  const index = siblings.findIndex((s) => s.id === id);
+  const swapWith = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || swapWith < 0 || swapWith >= siblings.length) return;
+
+  const order = siblings.map((s) => s.id);
+  [order[index], order[swapWith]] = [order[swapWith], order[index]];
+
+  await db.batch(
+    order.map((siblingId, i) =>
+      db.prepare("UPDATE locations SET sort_order = ? WHERE id = ?").bind(i + 1, siblingId),
+    ),
+  );
+}
+
+/** Puts a level back to natural label order ("Section 2" before "Section 10"). */
+export async function resetOrder(parentId: string | null): Promise<void> {
+  const db = await getDb();
+  await db
+    .prepare(
+      parentId === null
+        ? "UPDATE locations SET sort_order = 0 WHERE parent_id IS NULL"
+        : "UPDATE locations SET sort_order = 0 WHERE parent_id = ?",
+    )
+    .bind(...(parentId === null ? [] : [parentId]))
+    .run();
 }

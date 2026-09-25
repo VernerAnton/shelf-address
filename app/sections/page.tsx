@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { listChildren } from "@/lib/locations";
 import { AddButton } from "./_components/add-button";
+import { ListHeader } from "./_components/list-header";
 import { LocationList } from "./_components/location-list";
 import { ViewSwitch } from "./_components/view-switch";
 
@@ -15,7 +16,10 @@ export default async function SectionsPage() {
       <ViewSwitch active="tree" />
 
       {roots.length > 0 ? (
-        <LocationList locations={roots} />
+        <>
+          <ListHeader count={roots.length} orderHref="/sections/order" />
+          <LocationList locations={roots} />
+        </>
       ) : (
         <div className="rounded-xl border border-dashed border-line p-6 text-center text-muted">
           <p className="font-medium text-foreground">Nothing here yet</p>

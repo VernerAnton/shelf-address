@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { allowedChildKinds, getPath, listChildren, type LocationKind } from "@/lib/locations";
 import { updateLocationAction } from "../../actions";
@@ -48,6 +49,15 @@ export default async function EditLocationPage(props: PageProps<"/sections/[id]/
         cancelHref={`/sections/${id}`}
         wasShelf={location.kind === "shelf"}
       />
+
+      {location.kind !== "site" && (
+        <Link
+          href={`/sections/${id}/move`}
+          className="flex h-12 items-center justify-center rounded-xl border border-line bg-surface font-medium"
+        >
+          Move to another place
+        </Link>
+      )}
 
       <section className="mt-6 border-t border-line pt-6">
         <DeleteLocation

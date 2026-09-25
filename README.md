@@ -10,8 +10,9 @@ override it where they conflict.
 
 **Status: Phase 2 (location tree) complete.** Live at
 <https://shelf-address.verner-sdr.workers.dev>. Sites, shelves and sections can
-be added, edited, browsed and deleted, and shelf addresses are enforced unique
-across every site. Scanning (Phase 3) and lookup (Phase 4) are not built yet.
+be added, edited, moved, reordered, browsed and deleted, and shelf addresses
+are enforced unique across every site. Scanning (Phase 3) and lookup
+(Phase 4) are not built yet.
 
 ## Stack
 
@@ -69,6 +70,29 @@ npm run deploy
 
 Open that URL. Both rows on the page should be green. A red **D1** row almost
 always means step 4 was skipped.
+
+### Restricting who can open the app (Cloudflare Access)
+
+The app has no login of its own. Cloudflare Access sits in front of it and
+asks for a one-time code sent to an approved email address before anything
+loads. Free for up to 50 people, and no code changes.
+
+**First time only — switch on Zero Trust:** in the Cloudflare dashboard open
+**Zero Trust**, pick a team name (anything; it becomes
+`<name>.cloudflareaccess.com`), and choose the **Free** plan.
+
+**Then protect the app:**
+
+1. **Workers & Pages** → **shelf-address** → **Access** tab.
+2. **Protect this Worker behind Access**.
+3. Choose **All traffic** (not "Previews only").
+4. Under **Authentication policy**, choose email addresses and enter each
+   address allowed in.
+5. **Apply Access**.
+
+To add or remove someone later, edit that policy's email list. Per-version
+preview URLs are switched off in `wrangler.jsonc`, so the `workers.dev`
+address is the only way in.
 
 ### Optional: deploy automatically on every push
 

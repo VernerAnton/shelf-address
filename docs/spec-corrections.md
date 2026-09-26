@@ -221,3 +221,20 @@ item on pre-ISBN stock (§9 item 1).
 
 Implemented in `migrations/0004_edition_lookup.sql`, `lib/lookup/`,
 `lib/editions.ts`, `lib/catalog.ts`.
+
+## 13. Correcting a book whose barcode is wrong.
+
+**Adds to:** §12.
+
+Barcodes are sometimes simply wrong — a new book printed with another
+book's ISBN. Such a copy is looked up "successfully" as the wrong book.
+
+- **"Wrong book? Pick the right one"** on a copy with an ISBN re-points that
+  copy at the book it really is: by the ISBN printed inside (copyright page),
+  by Finna title/author search, or typed by hand (then "needs review"). The
+  wrong ISBN's own details are left untouched, because genuine copies of that
+  ISBN may exist. Other copies logged with the same barcode can be moved in
+  the same step.
+- **"Edit details"** is now on every book page, for smaller fixes (a typo, a
+  translator shown as author). It changes the details for every copy of that
+  edition, and says so.

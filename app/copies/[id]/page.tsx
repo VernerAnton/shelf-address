@@ -2,13 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { BookCover } from "@/components/book-cover";
 import { displayAddress } from "@/lib/address";
-import { getCopy } from "@/lib/copies";
+import { countSameBarcode, getCopy } from "@/lib/copies";
 import { editionKind, keyLabel } from "@/lib/edition-key";
 import { kickLookups } from "@/lib/editions";
 import { getPath, nearestAddressed, siteOf } from "@/lib/locations";
 import { Breadcrumb } from "@/app/sections/_components/breadcrumb";
 import { markReviewedAction, retryLookupAction } from "../actions";
 import { ConditionForm, DeleteCopy, EditDetails } from "../copy-forms";
+import { WrongBook } from "../wrong-book";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +28,7 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
   const { edition } = copy;
   if (edition.lookupStatus === "pending") await kickLookups(edition.key);
 
-  const path = await getPath(copy.locationId);
+  const [path, sameBarcode] = await Promise.all([getPath(copy.locationId), countSameBarcode(copy.id)]);
   const place = path.at(-1);
   const site = siteOf(path);
   const addressed = nearestAddressed(path);
@@ -81,7 +82,7 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
         </div>
       )}
 
-      {(edition.lookupStatus === "not_found" || editionKind(edition.key) === "manual" || edition.needsReview) && (
+      {edition.lookupStatus !== "pending" && (
         <EditDetails
           label={edition.title ? "Edit details" : "Enter details by hand"}
           editionKey={edition.key}
@@ -98,6 +99,10 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
             Mark as reviewed
           </button>
         </form>
+      )}
+
+      {editionKind(edition.key) === "isbn" && (
+        <WrongBook copyId={copy.id} currentTitle={edition.title ?? keyLabel(edition.key)} sameBarcode={sameBarcode} />
       )}
 
       <section className="rounded-xl border border-line bg-surface p-4">

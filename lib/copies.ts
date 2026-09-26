@@ -1,5 +1,5 @@
 import { getDb } from "@/lib/cloudflare";
-import { editionKind } from "@/lib/edition-key";
+import { editionKind, type EditionKind } from "@/lib/edition-key";
 import { EDITION_COLUMNS, toEdition, type Edition } from "@/lib/editions";
 import { editionSearchText } from "@/lib/search";
 
@@ -122,6 +122,39 @@ export function checkDetails(value: unknown, { requireTitle }: { requireTitle: b
   return { title, author: text(v.author, 200), publisher: text(v.publisher, 200), year: yearNumber };
 }
 
+/**
+ * The edition row a copy points at, created if new. For a scanned ISBN it's a
+ * placeholder the lookup chain fills in (lib/editions.ts). A Finna pick
+ * arrives with the details shown in the search, so it's findable at once; its
+ * lookup then replaces them with Finna's own record. A typed-in book is kept
+ * as typed and flagged for review. An edition that already exists is left
+ * exactly as it is.
+ */
+function ensureEdition(db: D1Database, key: string, kind: EditionKind, details: Details | null) {
+  if (kind === "isbn") {
+    return db
+      .prepare("INSERT OR IGNORE INTO editions (isbn13, search_text) VALUES (?, ?)")
+      .bind(key, editionSearchText({ key, title: null, author: null }));
+  }
+  return db
+    .prepare(
+      `INSERT OR IGNORE INTO editions
+         (isbn13, title, author, publisher, year, source, lookup_status, needs_review, search_text)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      key,
+      details?.title ?? null,
+      details?.author ?? null,
+      details?.publisher ?? null,
+      details?.year ?? null,
+      kind === "manual" ? "manual" : "finna",
+      kind === "manual" ? "skipped" : "pending",
+      kind === "manual" ? 1 : 0,
+      editionSearchText({ key, title: details?.title ?? null, author: details?.author ?? null, publisher: details?.publisher }),
+    );
+}
+
 /** Logs one physical copy. Returns created: false if this id was already stored. */
 export async function createCopy(input: NewCopy): Promise<{ created: boolean; editionKey: string }> {
   const db = await getDb();
@@ -138,33 +171,7 @@ export async function createCopy(input: NewCopy): Promise<{ created: boolean; ed
 
   const locationId = await checkPlace(db, input.locationId);
 
-  // The edition row the copy points at. For a scanned ISBN it's a placeholder
-  // the lookup chain fills in (lib/editions.ts). A Finna pick arrives with
-  // the details shown in the search, so it's findable at once; its lookup
-  // then replaces them with Finna's own record. A typed-in book is kept as
-  // typed and flagged for review.
-  const edition =
-    kind === "isbn"
-      ? db
-          .prepare("INSERT OR IGNORE INTO editions (isbn13, search_text) VALUES (?, ?)")
-          .bind(key, editionSearchText({ key, title: null, author: null }))
-      : db
-          .prepare(
-            `INSERT OR IGNORE INTO editions
-               (isbn13, title, author, publisher, year, source, lookup_status, needs_review, search_text)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .bind(
-            key,
-            details?.title ?? null,
-            details?.author ?? null,
-            details?.publisher ?? null,
-            details?.year ?? null,
-            kind === "manual" ? "manual" : "finna",
-            kind === "manual" ? "skipped" : "pending",
-            kind === "manual" ? 1 : 0,
-            editionSearchText({ key, title: details?.title ?? null, author: details?.author ?? null, publisher: details?.publisher }),
-          );
+  const edition = ensureEdition(db, key, kind, details);
 
   await db.batch([
     edition,
@@ -251,4 +258,47 @@ function toCopy(row: CopyRow): Copy {
     addedAt: row.added_at,
     edition: toEdition(row),
   };
+}
+
+/**
+ * "Wrong book?": points a copy at a different edition — for a barcode that
+ * belongs to another book (misprints happen). The copy moves; the edition it
+ * came from is left untouched, since real copies of that ISBN may exist.
+ * With `sameBarcode`, every other copy logged under the old key moves too.
+ * Returns the new key and how many copies changed.
+ */
+export async function reassignCopy(
+  copyId: unknown,
+  input: { key: unknown; details?: unknown },
+  { sameBarcode }: { sameBarcode: boolean },
+): Promise<{ key: string; changed: number }> {
+  const db = await getDb();
+  const id = checkId(copyId);
+  const copy = await db.prepare("SELECT isbn13 FROM copies WHERE id = ?").bind(id).first<{ isbn13: string }>();
+  if (!copy) throw new CopyError("That book is no longer logged.", 404);
+
+  const key = typeof input.key === "string" ? input.key : "";
+  const kind = editionKind(key);
+  if (!kind) throw new CopyError("That isn't a valid book ISBN.", 400);
+  if (key === copy.isbn13) throw new CopyError("That's the book it's already logged as.", 400);
+  const details = kind === "isbn" ? null : checkDetails(input.details, { requireTitle: kind === "manual" });
+
+  const move = sameBarcode
+    ? db.prepare("UPDATE copies SET isbn13 = ? WHERE isbn13 = ?").bind(key, copy.isbn13)
+    : db.prepare("UPDATE copies SET isbn13 = ? WHERE id = ?").bind(key, id);
+  const [, moved] = await db.batch([ensureEdition(db, key, kind, details), move]);
+  return { key, changed: moved.meta.changes ?? 0 };
+}
+
+/** How many other copies share this copy's barcode (edition key). */
+export async function countSameBarcode(copyId: string): Promise<number> {
+  const db = await getDb();
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM copies
+       WHERE isbn13 = (SELECT isbn13 FROM copies WHERE id = ?) AND id <> ?`,
+    )
+    .bind(copyId, copyId)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }

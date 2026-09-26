@@ -109,6 +109,7 @@ export function DetailsForm({
         <span className="text-sm font-medium">Year <span className="font-normal text-muted">(optional)</span></span>
         <input name="year" inputMode="numeric" value={values.year} onChange={(e) => setValues({ ...values, year: e.target.value })} className={field} />
       </label>
+      <p className="text-sm text-muted">Changes apply to every copy of this book.</p>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" name="reviewed" defaultChecked={!needsReview} className="size-5 accent-[var(--accent)]" />
         These details are checked — no review needed

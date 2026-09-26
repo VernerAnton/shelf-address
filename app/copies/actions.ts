@@ -2,8 +2,8 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { CopyError, checkDetails, deleteCopy, getCopy, moveCopy, setCondition } from "@/lib/copies";
-import { markReviewed, retryLookup, saveEditionDetails } from "@/lib/editions";
+import { CopyError, checkDetails, deleteCopy, getCopy, moveCopy, reassignCopy, setCondition } from "@/lib/copies";
+import { kickLookups, markReviewed, retryLookup, saveEditionDetails } from "@/lib/editions";
 import type { MoveState } from "@/app/sections/actions";
 
 /** `condition` is what's saved, so the chips show the result of each tap. */
@@ -87,4 +87,37 @@ export async function saveDetailsAction(_previous: DetailsState, formData: FormD
 export async function markReviewedAction(formData: FormData): Promise<void> {
   await markReviewed(String(formData.get("key") ?? ""));
   refresh();
+}
+
+export type ReassignState = { status: "idle" } | { status: "error"; message: string };
+
+/**
+ * "Wrong book?" — re-points a copy (and optionally every copy with the same
+ * barcode) at the book it really is. A typed-in book gets a fresh manual key.
+ */
+export async function reassignAction(_previous: ReassignState, formData: FormData): Promise<ReassignState> {
+  const copyId = String(formData.get("copyId") ?? "");
+  const rawKey = String(formData.get("key") ?? "");
+  const key = rawKey === "manual:new" ? `manual:${crypto.randomUUID()}` : rawKey;
+  const year = String(formData.get("year") ?? "");
+  try {
+    await reassignCopy(
+      copyId,
+      {
+        key,
+        details: {
+          title: formData.get("title"),
+          author: formData.get("author"),
+          publisher: formData.get("publisher"),
+          year: year ? Number(year) : null,
+        },
+      },
+      { sameBarcode: formData.get("sameBarcode") === "on" },
+    );
+  } catch (error) {
+    if (error instanceof CopyError) return { status: "error", message: error.message };
+    throw error;
+  }
+  await kickLookups(key);
+  redirect(`/copies/${copyId}`);
 }

@@ -179,6 +179,8 @@ lib/cloudflare.ts     getDb() / getBucket() — the binding accessors
 lib/locations.ts      location tree queries and writes
 lib/location-model.ts types and tree rules, safe for client code
 lib/address.ts        address normalising, uniqueness key, near-miss check
+lib/version.ts        APP_VERSION ("V1" at the foot of every tab) — bump when shipping
+components/app-update.tsx  "A newer version is ready" prompt; registers the service worker
 lib/isbn.ts           ISBN-13 validation, ISBN-10 conversion
 lib/copies.ts         copy (physical book) queries and writes
 lib/scan-queue.ts     offline queue rules (pure, unit tested)

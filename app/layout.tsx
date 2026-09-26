@@ -1,7 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { BottomNav } from "@/components/bottom-nav";
-import { ServiceWorker } from "@/components/service-worker";
+import { AppUpdate } from "@/components/app-update";
+import { VersionStamp } from "@/components/version-stamp";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -56,9 +57,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
         <div className="flex flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))]">
           {children}
+          <VersionStamp />
         </div>
         <BottomNav />
-        <ServiceWorker />
+        <AppUpdate />
       </body>
     </html>
   );

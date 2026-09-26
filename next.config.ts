@@ -1,7 +1,32 @@
+import { execSync } from "node:child_process";
 import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
-const nextConfig: NextConfig = {};
+/**
+ * Build details shown under the version number (lib/version.ts). Cosmetic, so
+ * nothing here may ever fail a build: every git call is guarded.
+ */
+function buildCommit(): string {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA.slice(0, 7);
+  try {
+    const sha = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+    const dirty = execSync("git status --porcelain", { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+    return dirty ? `${sha}-dirty` : sha;
+  } catch {
+    return "dev";
+  }
+}
+
+const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_BUILD_COMMIT: buildCommit(),
+    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString().slice(0, 16).replace("T", " "),
+  },
+};
 
 export default nextConfig;
 

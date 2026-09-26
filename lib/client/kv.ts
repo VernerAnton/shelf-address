@@ -46,3 +46,7 @@ export function kvGet<T>(key: string): Promise<T | undefined> {
 export function kvSet(key: string, value: unknown): Promise<void> {
   return run<void>("readwrite", (store) => store.put(value, key));
 }
+
+export function kvDelete(key: string): Promise<void> {
+  return run<void>("readwrite", (store) => store.delete(key));
+}

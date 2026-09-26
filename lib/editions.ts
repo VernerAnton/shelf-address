@@ -4,6 +4,7 @@ import { editionKind } from "@/lib/edition-key";
 import { DEFAULT_CONFIG, lookupFinnaRecord, lookupIsbn, type GetJson, type LookupConfig } from "@/lib/lookup/chain";
 import type { EditionData } from "@/lib/lookup/types";
 import { editionSearchText } from "@/lib/search";
+import { IMAGE_TYPES, imageProblem } from "@/lib/images";
 
 /**
  * Editions: the per-book metadata cache (spec §2.2) and the lookup runner
@@ -25,6 +26,8 @@ export type Edition = {
   year: number | null;
   source: string | null;
   coverUrl: string | null;
+  /** The cover is a photo taken on the phone; lookups leave it alone. */
+  coverByHand: boolean;
   lookupStatus: LookupStatus;
   needsReview: boolean;
 };
@@ -37,12 +40,13 @@ type EditionRow = {
   year: number | null;
   source: string | null;
   cover_url: string | null;
+  cover_by_hand: number;
   lookup_status: LookupStatus;
   needs_review: number;
 };
 
 export const EDITION_COLUMNS =
-  "isbn13, title, author, publisher, year, source, cover_url, lookup_status, needs_review";
+  "isbn13, title, author, publisher, year, source, cover_url, cover_by_hand, lookup_status, needs_review";
 
 export function toEdition(row: EditionRow): Edition {
   return {
@@ -53,6 +57,7 @@ export function toEdition(row: EditionRow): Edition {
     year: row.year,
     source: row.source,
     coverUrl: row.cover_url ? `/${row.cover_url}` : null,
+    coverByHand: row.cover_by_hand === 1,
     lookupStatus: row.lookup_status,
     needsReview: row.needs_review === 1,
   };
@@ -118,12 +123,14 @@ async function storeCover(key: string, url: string): Promise<string | null> {
 
 async function saveFound(key: string, data: EditionData) {
   const db = await getDb();
-  const cover = data.coverUrl ? await storeCover(key, data.coverUrl) : null;
+  // A cover photographed by hand is never replaced, so don't even fetch one.
+  const byHand = await db.prepare("SELECT cover_by_hand FROM editions WHERE isbn13 = ?").bind(key).first<{ cover_by_hand: number }>();
+  const cover = data.coverUrl && byHand?.cover_by_hand !== 1 ? await storeCover(key, data.coverUrl) : null;
   await db
     .prepare(
       `UPDATE editions SET
          title = ?, author = ?, publisher = ?, year = ?, edition = ?, language = ?,
-         source = ?, cover_url = COALESCE(?, cover_url), fetched_at = ?,
+         source = ?, cover_url = CASE WHEN cover_by_hand = 1 THEN cover_url ELSE COALESCE(?, cover_url) END, fetched_at = ?,
          lookup_status = 'found', lookup_attempts = lookup_attempts + 1, last_attempt_at = ?,
          search_text = ?
        WHERE isbn13 = ?`,
@@ -286,4 +293,39 @@ export async function saveEditionDetails(key: string, details: EditionDetails, {
 export async function markReviewed(key: string) {
   const db = await getDb();
   await db.prepare("UPDATE editions SET needs_review = 0 WHERE isbn13 = ?").bind(key).run();
+}
+
+/** After the phone's downscale a cover is ~200 KB; this is the ceiling. */
+export const COVER_PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+
+export class CoverError extends Error {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * A cover photographed on the phone (docs/spec-corrections.md §15). Replaces
+ * whatever cover the edition had — found or photographed — for every copy of
+ * it, and marks it so a later lookup never swaps it back.
+ */
+export async function setCoverPhoto(key: string, type: string, body: ArrayBuffer): Promise<string> {
+  const problem = imageProblem(type, body, COVER_PHOTO_MAX_BYTES);
+  if (problem) throw new CoverError(problem);
+  const db = await getDb();
+  const row = await db
+    .prepare("SELECT cover_url FROM editions WHERE isbn13 = ?")
+    .bind(key)
+    .first<{ cover_url: string | null }>();
+  if (!row) throw new CoverError("This book isn't logged any more.", 404);
+
+  const bucket = await getBucket();
+  const r2Key = `covers/${safeFileName(key)}-${Date.now()}.${IMAGE_TYPES[type]}`;
+  await bucket.put(r2Key, body, { httpMetadata: { contentType: type } });
+  await db.prepare("UPDATE editions SET cover_url = ?, cover_by_hand = 1 WHERE isbn13 = ?").bind(r2Key, key).run();
+  if (row.cover_url?.startsWith("covers/")) await bucket.delete(row.cover_url);
+  return `/${r2Key}`;
 }

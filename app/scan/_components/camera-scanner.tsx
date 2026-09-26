@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraIcon, FlashlightIcon } from "@/components/icons";
 import { parseIsbn } from "@/lib/isbn";
+import { onCameraClaims } from "@/lib/client/camera";
 
 type Props = {
   disabled: boolean;
@@ -176,6 +177,25 @@ export function CameraScanner({ disabled, onIsbn }: Props) {
   useEffect(() => {
     if (disabled && readerRef.current) stop();
   }, [disabled, stop]);
+
+  // The cover camera needs the camera for a moment; hand it over and resume.
+  useEffect(() => {
+    let resume = false;
+    return onCameraClaims({
+      claim: () => {
+        if (readerRef.current) {
+          resume = true;
+          stop();
+        }
+      },
+      release: () => {
+        if (resume) {
+          resume = false;
+          void start();
+        }
+      },
+    });
+  }, [start, stop]);
 
   return (
     <section aria-label="Camera scanner" className="flex flex-col gap-3">

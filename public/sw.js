@@ -5,6 +5,8 @@
  * makes sure the page itself can load.
  *
  *   /_next/static/*   cache-first. Content-hashed, never change once built.
+ *   /vendor/*         cache-first, own cache: OpenCV for the cover camera,
+ *                     ~11 MB, versioned by name; only the current one is kept.
  *   page navigations  network-first, fall back to the last copy seen.
  *   /api/*            never cached — the page's upload queue handles failure.
  *   other files       stale-while-revalidate (icons, manifest).
@@ -17,6 +19,7 @@
 const VERSION = "v1";
 const STATIC = `shelf-static-${VERSION}`;
 const PAGES = `shelf-pages-${VERSION}`;
+const VENDOR = `shelf-vendor-${VERSION}`;
 const STATIC_MAX_ENTRIES = 250;
 
 // Pages worth having before the first time they're visited offline.
@@ -56,7 +59,9 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       for (const name of await caches.keys()) {
-        if (name.startsWith("shelf-") && name !== STATIC && name !== PAGES) await caches.delete(name);
+        if (name.startsWith("shelf-") && name !== STATIC && name !== PAGES && name !== VENDOR) {
+          await caches.delete(name);
+        }
       }
       // Old builds' hashed files pile up across deploys; keep the newest.
       const cache = await caches.open(STATIC);
@@ -75,6 +80,19 @@ async function cacheFirst(request) {
   const response = await fetch(request);
   if (cacheable(response)) {
     const cache = await caches.open(STATIC);
+    await cache.put(request, response.clone());
+  }
+  return response;
+}
+
+/** A vendor file: kept for good; a new version replaces the old ones. */
+async function vendorFile(request) {
+  const cache = await caches.open(VENDOR);
+  const cached = await cache.match(request);
+  if (cached) return cached;
+  const response = await fetch(request);
+  if (cacheable(response)) {
+    for (const key of await cache.keys()) await cache.delete(key);
     await cache.put(request, response.clone());
   }
   return response;
@@ -126,6 +144,8 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(cacheFirst(request));
+  } else if (url.pathname.startsWith("/vendor/")) {
+    event.respondWith(vendorFile(request));
   } else if (request.mode === "navigate") {
     event.respondWith(networkFirstPage(request));
   } else if (request.headers.get("RSC") || url.searchParams.has("_rsc")) {

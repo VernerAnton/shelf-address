@@ -3,9 +3,11 @@
  * over an array so they can be tested without a browser. The Scan screen keeps
  * the array in IndexedDB and replays it against the API, oldest first.
  *
- * Three things can be waiting to upload: a new copy, an undo, and a condition
- * change. Where a later action cancels or updates one still waiting, the two
- * are merged on the phone and the network never sees the first.
+ * Four things can be waiting to upload: a new copy, an undo, a condition
+ * change, and a cover photo (§15 — the photo itself is kept on the phone under
+ * its photoId, not in the queue). Where a later action cancels or updates one
+ * still waiting, the two are merged on the phone and the network never sees
+ * the first.
  */
 
 /** Title/author/year for a book without an ISBN, sent with its first copy. */
@@ -28,7 +30,9 @@ export type Op =
       edition?: EditionDetails;
     }
   | { kind: "delete"; copyId: string }
-  | { kind: "condition"; copyId: string; condition: string | null };
+  | { kind: "condition"; copyId: string; condition: string | null }
+  /** A cover photographed for the copy's edition — shared by every copy of it. */
+  | { kind: "cover"; copyId: string; isbn13: string; photoId: string };
 
 export type QueuedOp = Op & {
   /** "waiting" is retried automatically; "failed" needs the person to act. */
@@ -40,6 +44,13 @@ export function enqueue(queue: QueuedOp[], op: Op): QueuedOp[] {
   const unsentCreate = queue.find((q) => q.kind === "create" && q.copyId === op.copyId);
 
   switch (op.kind) {
+    case "cover":
+      // A newer photo of the same book replaces one still waiting.
+      return [
+        ...queue.filter((q) => !(q.kind === "cover" && q.isbn13 === op.isbn13)),
+        { ...op, state: "waiting" },
+      ];
+
     case "create":
       return [...queue, { ...op, state: "waiting" }];
 
@@ -102,9 +113,26 @@ export type CopyStatus = "saved" | "waiting" | "failed";
 
 /** How a scan should be labelled on the Scan screen. */
 export function statusOf(queue: QueuedOp[], copyId: string): { status: CopyStatus; error?: string } {
-  const ops = queue.filter((q) => q.copyId === copyId);
+  // A cover photo has its own status (coverUploadOf): a failed photo mustn't
+  // read as a copy that wasn't saved.
+  const ops = queue.filter((q) => q.copyId === copyId && q.kind !== "cover");
   const failed = ops.find((q) => q.state === "failed");
   if (failed) return { status: "failed", error: failed.error };
   if (ops.length > 0) return { status: "waiting" };
   return { status: "saved" };
+}
+
+/** The cover photo waiting (or failed) for an edition, if any. */
+export function coverUploadOf(queue: QueuedOp[], isbn13: string): Extract<QueuedOp, { kind: "cover" }> | undefined {
+  return queue.find((q): q is Extract<QueuedOp, { kind: "cover" }> => q.kind === "cover" && q.isbn13 === isbn13);
+}
+
+/** Give up on a cover photo that couldn't be saved. */
+export function discardCover(queue: QueuedOp[], isbn13: string): QueuedOp[] {
+  return queue.filter((q) => !(q.kind === "cover" && q.isbn13 === isbn13));
+}
+
+/** Photos the queue still needs; any other stored photo can be deleted. */
+export function photoIdsIn(queue: QueuedOp[]): Set<string> {
+  return new Set(queue.flatMap((q) => (q.kind === "cover" ? [q.photoId] : [])));
 }

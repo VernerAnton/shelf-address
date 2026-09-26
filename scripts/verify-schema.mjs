@@ -214,6 +214,22 @@ rejects(
   `INSERT INTO panels (location_id) VALUES ('n3')`,
 );
 
+// --- Cover photos (0006) ---------------------------------------------------
+allows(
+  "a cover photographed by hand",
+  `INSERT INTO editions (isbn13, title, cover_url, cover_by_hand) VALUES ('manual:photo-1', 'Kalevala', 'covers/x.jpg', 1)`,
+);
+rejects(
+  "a cover_by_hand flag other than 0 or 1",
+  `INSERT INTO editions (isbn13, cover_by_hand) VALUES ('manual:photo-2', 2)`,
+);
+{
+  db.exec(`INSERT INTO editions (isbn13) VALUES ('manual:photo-3')`);
+  const flag = db.prepare("SELECT cover_by_hand AS f FROM editions WHERE isbn13 = 'manual:photo-3'").get().f;
+  if (flag === 0) passed++;
+  else failures.push(`cover_by_hand should default to 0 — got ${flag}`);
+}
+
 // --- §2.3 copies -----------------------------------------------------------
 allows(
   "a copy shelved at a shelf",

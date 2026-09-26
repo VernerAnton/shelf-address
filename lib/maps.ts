@@ -1,4 +1,5 @@
 import { getBucket, getDb } from "@/lib/cloudflare";
+import { IMAGE_TYPES, imageProblem } from "@/lib/images";
 
 /**
  * Site reference maps (spec §5): one photo per site — a hand-drawn sketch, a
@@ -11,8 +12,6 @@ import { getBucket, getDb } from "@/lib/cloudflare";
 
 /** After the phone's downscale a map is a few hundred KB; this is the ceiling. */
 export const MAP_MAX_BYTES = 8 * 1024 * 1024;
-
-const TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 export class MapError extends Error {}
 
@@ -29,23 +28,10 @@ export function mapUrl(key: string | null): string | null {
   return key ? `/${key}` : null;
 }
 
-/** Checks the first bytes really are the image type claimed. */
-function looksLike(type: string, bytes: Uint8Array): boolean {
-  const at = (i: number, ...b: number[]) => b.every((v, j) => bytes[i + j] === v);
-  if (type === "image/jpeg") return at(0, 0xff, 0xd8, 0xff);
-  if (type === "image/png") return at(0, 0x89, 0x50, 0x4e, 0x47);
-  if (type === "image/webp") return at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50);
-  return false;
-}
-
 export async function setSiteMap(siteId: string, type: string, body: ArrayBuffer): Promise<string> {
-  const ext = TYPES[type];
-  if (!ext) throw new MapError("That isn't a photo this can store (JPEG, PNG or WebP).");
-  if (body.byteLength === 0) throw new MapError("The photo arrived empty. Try again.");
-  if (body.byteLength > MAP_MAX_BYTES) throw new MapError("That photo is too large. Try a smaller one.");
-  if (!looksLike(type, new Uint8Array(body, 0, Math.min(12, body.byteLength)))) {
-    throw new MapError("That file doesn't look like a photo.");
-  }
+  const problem = imageProblem(type, body, MAP_MAX_BYTES);
+  if (problem) throw new MapError(problem);
+  const ext = IMAGE_TYPES[type];
 
   const db = await getDb();
   const site = await db

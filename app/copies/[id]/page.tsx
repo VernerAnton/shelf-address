@@ -14,6 +14,7 @@ import { Breadcrumb } from "@/app/sections/_components/breadcrumb";
 import { markReviewedAction, retryLookupAction } from "../actions";
 import { ConditionForm, DeleteCopy, EditDetails } from "../copy-forms";
 import { WrongBook } from "../wrong-book";
+import { CoverPhoto } from "../cover-photo";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,7 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
           {edition.source && edition.title && (
             <p className="text-xs text-muted">Details from {SOURCE[edition.source] ?? edition.source}</p>
           )}
+          {edition.coverByHand && <p className="text-xs text-muted">Cover photographed by you</p>}
           {edition.needsReview && (
             <p className="mt-2 inline-block rounded bg-warn-bg px-2 py-0.5 text-xs font-semibold text-warn-text">
               Needs review
@@ -65,6 +67,14 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
           )}
         </div>
       </header>
+
+      {edition.lookupStatus !== "pending" && (
+        <CoverPhoto
+          editionKey={edition.key}
+          title={edition.title ?? keyLabel(edition.key)}
+          hasCover={Boolean(edition.coverUrl)}
+        />
+      )}
 
       {edition.lookupStatus === "pending" && (
         <form action={retryLookupAction} className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3 text-sm">

@@ -18,6 +18,7 @@ const eslintConfig = defineConfig([
     ".open-next/**",
     // Service worker: plain browser JS, outside the Next/TS toolchain.
     "public/sw.js",
+    "public/vendor/**",
     // Local wrangler state and dev bundles.
     ".wrangler/**",
   ]),

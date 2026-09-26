@@ -265,3 +265,33 @@ book's ISBN. Such a copy is looked up "successfully" as the wrong book.
   `maps/`, replaced or removed from the map page, and deleted with its site.
   Linked from the site, every place inside it, and every book logged there.
   Still tied to nothing else (§5).
+
+## 15. Cover photos taken on the phone.
+
+**Adds to:** §12 (lookups) and spec §2.2 (covers).
+
+When no source has a cover — common for older Finnish titles — the book is
+photographed. Searching Google Images was considered and rejected: there's
+no legitimate image-search API left to use, results are often another
+edition, and the images belong to others.
+
+- **When it's offered:** on a scan's row, once its lookup has come back
+  without a cover ("No cover found"), or straight away with no signal. A
+  button, never an automatic switch to the camera — that would cut into
+  scanning a stack. Also on every book page: "Photograph cover", or "Replace
+  cover with a photo" when the found cover is wrong.
+- **Per edition:** the photo is shared by every copy of that book, and
+  replaces any cover the sources found. `editions.cover_by_hand` marks it;
+  a later lookup never replaces it (`migrations/0006_cover_photos.sql`).
+- **Like a document scanner:** the camera outlines the book live; after the
+  shot, four corner handles start on the book's corners (drag to correct,
+  with a magnifier); saving straightens and crops it to at most 1600 px, with
+  a mild brightness/contrast lift. "Choose a photo" works the same on a saved
+  picture. Edge detection is OpenCV.js (~11 MB), served from this site, run
+  in a worker, downloaded in the background while there's signal and kept
+  by the service worker for offline use. Detection works in colour, and
+  joins a cover that bands or lines split into pieces. It can still be
+  fooled — two books side by side, a cover the same colour as the table —
+  which is what the handles are for.
+- **Offline:** the photo is saved on the phone and uploads after its scan,
+  like everything else in the queue.

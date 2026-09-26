@@ -11,6 +11,7 @@ import {
   startScanStore,
   useScanState,
 } from "@/lib/client/scan-store";
+import { prefetchVision } from "@/lib/client/cover-vision";
 import { CameraScanner } from "./camera-scanner";
 import { ManualEntry } from "./manual-entry";
 import { NoBarcode } from "./no-barcode";
@@ -31,6 +32,8 @@ export function ScanScreen() {
     // Refresh the phone's copy of the tree every time the tab opens, so newly
     // added places are pickable. Harmless with no signal: the old copy stays.
     void startScanStore().then(() => refreshPlaces());
+    // Get the cover camera's edge detection onto the phone while there's signal.
+    prefetchVision();
   }, []);
 
   const active = describePlace(state.places, state.activePlaceId);
@@ -115,6 +118,8 @@ export function ScanScreen() {
         recent={state.recent}
         queue={state.queue}
         editions={state.editions}
+        localCovers={state.localCovers}
+        online={state.online}
         activePlaceId={active ? state.activePlaceId : null}
         activePlaceLabel={active?.place.label ?? null}
       />

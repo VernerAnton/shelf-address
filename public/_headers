@@ -1,0 +1,3 @@
+# Versioned by file name (scripts/copy-opencv.mjs): cache for good.
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable

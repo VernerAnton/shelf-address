@@ -15,17 +15,20 @@ import { displayAddress } from "@/lib/address";
 import type { Condition } from "@/lib/copy-model";
 import { nearestAddressed, pathIn, type Location } from "@/lib/location-model";
 import {
+  coverUploadOf,
   discard,
+  discardCover,
   enqueue,
   type EditionDetails,
   markFailed,
   markSent,
   nextToSend,
+  photoIdsIn,
   retryCreateAt,
   type Op,
   type QueuedOp,
 } from "@/lib/scan-queue";
-import { kvGet, kvSet } from "./kv";
+import { kvDelete, kvGet, kvSet } from "./kv";
 
 export type RecentScan = {
   copyId: string;
@@ -58,6 +61,8 @@ export type ScanState = {
   places: PlacesSnapshot | null;
   /** Titles and covers of recent scans, kept so they show offline too. */
   editions: Record<string, EditionSummary>;
+  /** Cover photos taken on this phone and not uploaded yet, by edition key (object URLs). */
+  localCovers: Record<string, string>;
   activePlaceId: string | null;
   online: boolean;
   syncing: boolean;
@@ -74,6 +79,7 @@ let state: ScanState = {
   recent: [],
   places: null,
   editions: {},
+  localCovers: {},
   activePlaceId: null,
   online: true,
   syncing: false,
@@ -98,6 +104,25 @@ async function persist() {
     kvSet("recent", state.recent),
     kvSet("activePlaceId", state.activePlaceId),
   ]);
+}
+
+/**
+ * Replaces the queue, and tidies up after cover photos it no longer needs:
+ * their stored bytes are deleted and their previews dropped.
+ */
+function setQueue(queue: QueuedOp[]) {
+  const before = state.queue.flatMap((q) => (q.kind === "cover" ? [q] : []));
+  const keep = photoIdsIn(queue);
+  const localCovers = { ...state.localCovers };
+  for (const op of before) {
+    if (keep.has(op.photoId)) continue;
+    void kvDelete(`photo:${op.photoId}`);
+    if (!coverUploadOf(queue, op.isbn13) && localCovers[op.isbn13]) {
+      URL.revokeObjectURL(localCovers[op.isbn13]);
+      delete localCovers[op.isbn13];
+    }
+  }
+  set({ queue, localCovers });
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +173,7 @@ export async function setActivePlace(id: string | null) {
 // ---------------------------------------------------------------------------
 
 async function apply(op: Op) {
-  set({ queue: enqueue(state.queue, op) });
+  setQueue(enqueue(state.queue, op));
   await persist();
   void flush();
 }
@@ -228,8 +253,8 @@ export async function retryScanHere(copyId: string) {
   await startScanStore();
   const locationId = state.activePlaceId;
   if (!locationId) return;
+  setQueue(retryCreateAt(state.queue, copyId, locationId));
   set({
-    queue: retryCreateAt(state.queue, copyId, locationId),
     recent: state.recent.map((r) =>
       r.copyId === copyId
         ? { ...r, locationId, placeName: describePlace(state.places, locationId)?.name ?? r.placeName }
@@ -242,10 +267,34 @@ export async function retryScanHere(copyId: string) {
 
 export async function discardScan(copyId: string) {
   await startScanStore();
-  set({
-    queue: discard(state.queue, copyId),
-    recent: state.recent.filter((r) => r.copyId !== copyId),
-  });
+  setQueue(discard(state.queue, copyId));
+  set({ recent: state.recent.filter((r) => r.copyId !== copyId) });
+  await persist();
+}
+
+// ---------------------------------------------------------------------------
+// Cover photos (§15)
+// ---------------------------------------------------------------------------
+
+/**
+ * A cover photographed for a scanned book. Kept on the phone first, like a
+ * scan, and uploaded after it; shown in the list straight away.
+ */
+export async function addCoverPhoto(copyId: string, key: string, photo: Blob) {
+  await startScanStore();
+  const photoId = crypto.randomUUID();
+  await kvSet(`photo:${photoId}`, await photo.arrayBuffer());
+  const localCovers = { ...state.localCovers };
+  if (localCovers[key]) URL.revokeObjectURL(localCovers[key]);
+  localCovers[key] = URL.createObjectURL(photo);
+  set({ localCovers });
+  await apply({ kind: "cover", copyId, isbn13: key, photoId });
+}
+
+/** Give up on a cover photo the server refused. */
+export async function discardCoverPhoto(key: string) {
+  await startScanStore();
+  setQueue(discardCover(state.queue, key));
   await persist();
 }
 
@@ -259,7 +308,12 @@ type Outcome =
   | { kind: "retry" } // offline, or a server hiccup
   | { kind: "login" }; // Cloudflare Access wants a fresh login
 
-async function request(method: string, url: string, body?: unknown): Promise<Outcome> {
+async function request(
+  method: string,
+  url: string,
+  body?: unknown,
+  raw?: { bytes: ArrayBuffer; type: string },
+): Promise<Outcome> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -269,8 +323,8 @@ async function request(method: string, url: string, body?: unknown): Promise<Out
       // "no signal", and scans would wait forever. Catch it instead.
       redirect: "manual",
       credentials: "same-origin",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: raw ? { "content-type": raw.type } : body === undefined ? undefined : { "content-type": "application/json" },
+      body: raw ? raw.bytes : body === undefined ? undefined : JSON.stringify(body),
       cache: "no-store",
     });
   } catch {
@@ -294,8 +348,16 @@ async function request(method: string, url: string, body?: unknown): Promise<Out
   return { kind: "retry" };
 }
 
-function send(op: QueuedOp): Promise<Outcome> {
+async function send(op: QueuedOp): Promise<Outcome> {
   switch (op.kind) {
+    case "cover": {
+      const bytes = await kvGet<ArrayBuffer>(`photo:${op.photoId}`);
+      if (!bytes) return { kind: "rejected", error: "The photo was lost on this phone. Take it again." };
+      return request("PUT", `/api/editions/cover?key=${encodeURIComponent(op.isbn13)}`, undefined, {
+        bytes,
+        type: "image/jpeg",
+      });
+    }
     case "create":
       return request("POST", "/api/copies", {
         id: op.copyId,
@@ -325,9 +387,16 @@ export async function flush(): Promise<void> {
       const outcome = await send(op);
       if (outcome.kind === "ok") {
         uploadedScan ||= op.kind === "create";
-        set({ queue: markSent(state.queue, op) });
+        if (op.kind === "cover") {
+          // Show the stored cover from now on (it's the same picture).
+          const url = (outcome.body as { url?: string } | null)?.url ?? null;
+          const known = state.editions[op.isbn13] ?? { title: null, author: null, lookupStatus: "pending" as const };
+          set({ editions: { ...state.editions, [op.isbn13]: { ...known, coverUrl: url } } });
+          await kvSet("editions", state.editions);
+        }
+        setQueue(markSent(state.queue, op));
       } else if (outcome.kind === "rejected") {
-        set({ queue: markFailed(state.queue, op, outcome.error) });
+        setQueue(markFailed(state.queue, op, outcome.error));
       } else {
         break;
       }
@@ -358,8 +427,16 @@ export function startScanStore(): Promise<void> {
       kvGet<string | null>("activePlaceId"),
       kvGet<Record<string, EditionSummary>>("editions"),
     ]);
+    // Previews for cover photos still waiting to upload.
+    const localCovers: Record<string, string> = {};
+    for (const op of queue ?? []) {
+      if (op.kind !== "cover") continue;
+      const bytes = await kvGet<ArrayBuffer>(`photo:${op.photoId}`);
+      if (bytes) localCovers[op.isbn13] = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+    }
     set({
       ready: true,
+      localCovers,
       queue: queue ?? [],
       recent: recent ?? [],
       places: places ?? null,

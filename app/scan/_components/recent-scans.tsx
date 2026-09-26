@@ -1,9 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { BookCover } from "@/components/book-cover";
-import { CheckIcon, ClockIcon, WarningIcon } from "@/components/icons";
+import { CoverCamera } from "@/components/cover-camera";
+import { CameraIcon, CheckIcon, ClockIcon, WarningIcon } from "@/components/icons";
 import { ConditionChips } from "@/components/condition-chips";
 import {
+  addCoverPhoto,
+  discardCoverPhoto,
   discardScan,
   retryScanHere,
   setScanCondition,
@@ -12,7 +16,7 @@ import {
   type RecentScan,
 } from "@/lib/client/scan-store";
 import { keyLabel } from "@/lib/edition-key";
-import { statusOf, type QueuedOp } from "@/lib/scan-queue";
+import { coverUploadOf, statusOf, type QueuedOp } from "@/lib/scan-queue";
 
 function time(iso: string) {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -22,16 +26,28 @@ function ScanRow({
   scan,
   queue,
   edition,
+  localCover,
+  online,
   showPlace,
   hasActivePlace,
+  onPhotograph,
 }: {
   scan: RecentScan;
   queue: QueuedOp[];
   edition: EditionSummary | undefined;
+  localCover: string | undefined;
+  online: boolean;
   showPlace: boolean;
   hasActivePlace: boolean;
+  onPhotograph: () => void;
 }) {
   const { status, error } = statusOf(queue, scan.copyId);
+  const cover = localCover ?? edition?.coverUrl ?? null;
+  const coverUpload = coverUploadOf(queue, scan.isbn13);
+  // Offer the camera once the lookup has come back without a cover — or
+  // straight away with no signal, when no lookup can happen yet.
+  const lookupDone = edition !== undefined && edition.lookupStatus !== "pending";
+  const offerPhoto = !cover && status !== "failed" && (lookupDone || (!online && edition === undefined));
   const title = edition?.title ?? scan.title ?? null;
   const author = edition?.author ?? scan.author ?? null;
   const lookupNote =
@@ -61,7 +77,7 @@ function ScanRow({
           )}
           <span className="sr-only">{statusLabel}</span>
         </span>
-        <BookCover src={edition?.coverUrl ?? null} />
+        <BookCover src={cover} />
         <span className="min-w-0 flex-1">
           {title ? (
             <>
@@ -89,6 +105,37 @@ function ScanRow({
           Undo
         </button>
       </div>
+      {offerPhoto && (
+        <div className="flex items-center gap-3 pl-8">
+          <button
+            type="button"
+            onClick={onPhotograph}
+            className="flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line px-3 text-sm font-medium"
+          >
+            <CameraIcon className="size-4" />
+            Photograph cover
+          </button>
+          {lookupDone && <span className="text-sm text-muted">No cover found</span>}
+        </div>
+      )}
+      {coverUpload?.state === "waiting" && !online && (
+        <p className="pl-8 text-sm text-muted">Cover photo saved on this phone — uploads when there&apos;s signal.</p>
+      )}
+      {coverUpload?.state === "failed" && (
+        <div className="flex flex-wrap items-center gap-2 pl-8">
+          <p className="w-full text-sm text-danger">Cover photo not saved: {coverUpload.error}</p>
+          <button type="button" onClick={onPhotograph} className="h-9 rounded-lg border border-line px-3 text-sm font-medium">
+            Take it again
+          </button>
+          <button
+            type="button"
+            onClick={() => void discardCoverPhoto(scan.isbn13)}
+            className="h-9 rounded-lg border border-line px-3 text-sm font-medium"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {status === "failed" ? (
         <div className="flex flex-col gap-2 pl-8">
           <p className="text-sm text-danger">{error}</p>
@@ -134,15 +181,20 @@ export function RecentScans({
   recent,
   queue,
   editions,
+  localCovers,
+  online,
   activePlaceId,
   activePlaceLabel,
 }: {
   recent: RecentScan[];
   queue: QueuedOp[];
   editions: Record<string, EditionSummary>;
+  localCovers: Record<string, string>;
+  online: boolean;
   activePlaceId: string | null;
   activePlaceLabel: string | null;
 }) {
+  const [photographing, setPhotographing] = useState<RecentScan | null>(null);
   if (recent.length === 0) return null;
 
   const failed = (scan: RecentScan) => statusOf(queue, scan.copyId).status === "failed";
@@ -154,13 +206,27 @@ export function RecentScans({
       scan={scan}
       queue={queue}
       edition={editions[scan.isbn13]}
+      localCover={localCovers[scan.isbn13]}
+      online={online}
       showPlace={showPlace || scan.locationId !== activePlaceId}
       hasActivePlace={activePlaceId !== null}
+      onPhotograph={() => setPhotographing(scan)}
     />
   );
 
+  const photoTitle = photographing
+    ? (editions[photographing.isbn13]?.title ?? photographing.title ?? keyLabel(photographing.isbn13))
+    : "";
+
   return (
     <section aria-label="Recent scans" className="flex flex-col gap-2">
+      {photographing && (
+        <CoverCamera
+          title={photoTitle}
+          onSave={(photo) => addCoverPhoto(photographing.copyId, photographing.isbn13, photo)}
+          onClose={() => setPhotographing(null)}
+        />
+      )}
       <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-muted">
         {activePlaceLabel ? `Scanned into ${activePlaceLabel}` : "Recent scans"}
       </h2>

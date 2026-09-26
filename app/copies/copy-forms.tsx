@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { CONDITION_MAX } from "@/lib/copy-model";
+import { ConditionChips } from "@/components/condition-chips";
 import {
   deleteCopyAction,
   setConditionAction,
@@ -12,35 +12,21 @@ import {
 export function ConditionForm({ id, condition }: { id: string; condition: string | null }) {
   const [state, formAction, pending] = useActionState<ConditionState, FormData>(setConditionAction, {
     status: "idle",
+    condition,
   });
-  const [value, setValue] = useState(condition ?? "");
 
   return (
     <form action={formAction} className="flex flex-col gap-1.5">
       <input type="hidden" name="id" value={id} />
-      <label htmlFor="condition" className="text-sm font-medium">
-        Condition <span className="font-normal text-muted">(optional)</span>
-      </label>
-      <div className="flex gap-2">
-        <input
-          id="condition"
-          name="condition"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          maxLength={CONDITION_MAX}
-          placeholder="e.g. torn dust jacket"
-          className="h-12 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-base outline-none focus:border-accent"
-        />
-        <button
-          type="submit"
-          disabled={pending}
-          className="h-12 shrink-0 rounded-xl bg-accent px-4 font-medium text-accent-contrast disabled:opacity-60"
-        >
-          Save
-        </button>
-      </div>
-      {state.status === "saved" && <p role="status" className="text-sm text-muted">Saved.</p>}
-      {state.status === "error" && <p role="alert" className="text-sm text-danger">{state.message}</p>}
+      <p className="text-sm font-medium">
+        Condition <span className="font-normal text-muted">(tap again to clear)</span>
+      </p>
+      <ConditionChips value={state.condition} label="Condition" name="condition" disabled={pending} />
+      {state.status === "error" && (
+        <p role="alert" className="text-sm text-danger">
+          {state.message}
+        </p>
+      )}
     </form>
   );
 }

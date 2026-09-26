@@ -108,7 +108,12 @@ export function ScanScreen() {
 
       <ManualEntry disabled={!canScan} onIsbn={onIsbn} />
 
-      <RecentScans recent={state.recent} queue={state.queue} hasActivePlace={Boolean(active)} />
+      <RecentScans
+        recent={state.recent}
+        queue={state.queue}
+        activePlaceId={active ? state.activePlaceId : null}
+        activePlaceLabel={active?.place.label ?? null}
+      />
 
       {picking && state.places && (
         <PlacePicker
@@ -119,6 +124,8 @@ export function ScanScreen() {
           onChoose={(id) => {
             void setActivePlace(id);
             setPicking(false);
+            // "Logged …" refers to the previous place; don't let it read as this one.
+            if (id !== state.activePlaceId) setLastLogged(null);
           }}
         />
       )}

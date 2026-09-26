@@ -12,6 +12,7 @@
 
 import { useSyncExternalStore } from "react";
 import { displayAddress } from "@/lib/address";
+import type { Condition } from "@/lib/copy-model";
 import { nearestAddressed, pathIn, type Location } from "@/lib/location-model";
 import {
   discard,
@@ -167,11 +168,10 @@ export async function undoScan(copyId: string) {
   await apply({ kind: "delete", copyId });
 }
 
-export async function setScanCondition(copyId: string, condition: string | null) {
+export async function setScanCondition(copyId: string, condition: Condition | null) {
   await startScanStore();
-  const cleaned = condition?.trim().replace(/\s+/g, " ") || null;
-  set({ recent: state.recent.map((r) => (r.copyId === copyId ? { ...r, condition: cleaned } : r)) });
-  await apply({ kind: "condition", copyId, condition: cleaned });
+  set({ recent: state.recent.map((r) => (r.copyId === copyId ? { ...r, condition } : r)) });
+  await apply({ kind: "condition", copyId, condition });
 }
 
 /** A scan that failed (e.g. its place was deleted): log it at the active place instead. */

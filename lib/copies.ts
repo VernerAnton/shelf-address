@@ -10,8 +10,7 @@ import { isIsbn13 } from "@/lib/isbn";
  * a retry after a dropped response — stores it once.
  */
 
-export { CONDITION_MAX } from "@/lib/copy-model";
-import { CONDITION_MAX } from "@/lib/copy-model";
+import { CONDITIONS, isCondition } from "@/lib/copy-model";
 
 export type Copy = {
   id: string;
@@ -43,14 +42,13 @@ function checkId(id: unknown): string {
   return id.toLowerCase();
 }
 
+/** One of the store's grades K1–K5, or none. */
 function checkCondition(condition: unknown): string | null {
-  if (condition === null || condition === undefined) return null;
-  if (typeof condition !== "string") throw new CopyError("Condition must be text.", 400);
-  const trimmed = condition.trim().replace(/\s+/g, " ");
-  if (trimmed.length > CONDITION_MAX) {
-    throw new CopyError(`Keep the condition under ${CONDITION_MAX} characters.`, 400);
+  if (condition === null || condition === undefined || condition === "") return null;
+  if (!isCondition(condition)) {
+    throw new CopyError(`Condition must be one of ${CONDITIONS.join(", ")}.`, 400);
   }
-  return trimmed || null;
+  return condition;
 }
 
 /**

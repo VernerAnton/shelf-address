@@ -4,20 +4,23 @@ import { redirect } from "next/navigation";
 import { CopyError, deleteCopy, getCopy, moveCopy, setCondition } from "@/lib/copies";
 import type { MoveState } from "@/app/sections/actions";
 
+/** `condition` is what's saved, so the chips show the result of each tap. */
 export type ConditionState =
-  | { status: "idle" }
-  | { status: "saved" }
-  | { status: "error"; message: string };
+  | { status: "idle" | "saved"; condition: string | null }
+  | { status: "error"; condition: string | null; message: string };
 
 export async function setConditionAction(
-  _previous: ConditionState,
+  previous: ConditionState,
   formData: FormData,
 ): Promise<ConditionState> {
+  const condition = String(formData.get("condition") ?? "") || null;
   try {
-    await setCondition(String(formData.get("id") ?? ""), String(formData.get("condition") ?? ""));
-    return { status: "saved" };
+    await setCondition(String(formData.get("id") ?? ""), condition);
+    return { status: "saved", condition };
   } catch (error) {
-    if (error instanceof CopyError) return { status: "error", message: error.message };
+    if (error instanceof CopyError) {
+      return { status: "error", condition: previous.condition, message: error.message };
+    }
     throw error;
   }
 }

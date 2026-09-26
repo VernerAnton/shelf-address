@@ -167,3 +167,18 @@ choices a reader of the spec couldn't infer.
   list or the book's own page.
 - **A copy points at a placeholder edition** (ISBN only) until Phase 4's
   lookup fills in title, author and cover.
+
+## 11. Condition is a grade, K1–K5.
+
+**Refines:** §2.3's free-text `condition`, and §10's "optional, added after the
+scan".
+
+Condition is one of the store's own grades, **K1, K2, K3, K4 or K5**, set with
+one tap — on each recent scan and on the book's own page. Tapping the chosen
+grade again clears it. The server accepts nothing else, so every copy is graded
+the same way. (No free-text conditions existed when this changed.)
+
+Also from the first real-world test: the Scan tab's recent-scans list now
+shows only what was scanned into the **current** place, with scans from other
+places folded under "Recent scans in other places". Previously one list mixed
+every place, which read as if books scanned into Row 1 were in Row 2.

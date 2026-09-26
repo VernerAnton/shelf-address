@@ -195,6 +195,25 @@ allows(
      VALUES ('manual:0b7c1a52-3f5e-4b8e-9d2a-1c9e7f3a6b10', 'Vanha kirja', 'Tuntematon', 'manual', 'skipped', 1)`,
 );
 
+// --- Phase 5: instruction panels (0005) ------------------------------------
+allows(
+  "a panel on a shelf",
+  `INSERT INTO panels (location_id, how_to_find, notes, updated_at)
+     VALUES ('sh-1', 'Grouped by publisher, not author.', '{"n3":"paperbacks"}', '2026-09-26T10:00:00Z')`,
+);
+rejects(
+  "a panel for a place that doesn't exist",
+  `INSERT INTO panels (location_id, updated_at) VALUES ('nowhere', '2026-09-26T10:00:00Z')`,
+);
+rejects(
+  "two panels for one place",
+  `INSERT INTO panels (location_id, updated_at) VALUES ('sh-1', '2026-09-26T10:00:00Z')`,
+);
+rejects(
+  "a panel without its updated date",
+  `INSERT INTO panels (location_id) VALUES ('n3')`,
+);
+
 // --- §2.3 copies -----------------------------------------------------------
 allows(
   "a copy shelved at a shelf",
@@ -247,6 +266,16 @@ rejects(
     .get();
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(row.added_at))
     failures.push(`added_at should default to an ISO-8601 UTC string, got ${row.added_at}`);
+  else passed++;
+}
+
+// --- a panel goes with its place -------------------------------------------
+{
+  db.exec(`INSERT INTO locations (id, parent_id, kind, label, address, address_key) VALUES ('sh-gone', 'n3', 'shelf', 'Temp', 'Torikatu 99', 'torikatu 99')`);
+  db.exec(`INSERT INTO panels (location_id, updated_at) VALUES ('sh-gone', '2026-09-26T10:00:00Z')`);
+  db.exec(`DELETE FROM locations WHERE id = 'sh-gone'`);
+  const left = db.prepare("SELECT COUNT(*) AS n FROM panels WHERE location_id = 'sh-gone'").get().n;
+  if (left !== 0) failures.push("deleting a place should delete its panel");
   else passed++;
 }
 

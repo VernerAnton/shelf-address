@@ -3,6 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { addressKey } from "@/lib/address";
+import { PanelError, savePanel } from "@/lib/panels";
 import {
   ADDRESS_MAX,
   canHaveAddress,
@@ -203,4 +204,25 @@ export async function resetOrderAction(formData: FormData): Promise<void> {
   const parentId = String(formData.get("parentId") ?? "") || null;
   await resetOrder(parentId);
   refresh();
+}
+
+export type PanelState = { status: "idle" | "saved" } | { status: "error"; message: string };
+
+/** Saves an instructions panel. Notes arrive as fields named `note:<location id>`. */
+export async function savePanelAction(_previous: PanelState, formData: FormData): Promise<PanelState> {
+  const notes: Record<string, string> = {};
+  for (const [name, value] of formData.entries()) {
+    if (name.startsWith("note:") && typeof value === "string") notes[name.slice(5)] = value;
+  }
+  try {
+    await savePanel(String(formData.get("locationId") ?? ""), {
+      howToFind: String(formData.get("howToFind") ?? ""),
+      notes,
+    });
+  } catch (error) {
+    if (error instanceof PanelError) return { status: "error", message: error.message };
+    throw error;
+  }
+  refresh();
+  return { status: "saved" };
 }

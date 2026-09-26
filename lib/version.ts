@@ -5,7 +5,7 @@
  * not every commit — and keeping it in its own file makes the bump a one-line
  * diff that's obvious in review.
  */
-export const APP_VERSION = 4;
+export const APP_VERSION = 5;
 
 /** Commit and build time of this build, baked in by next.config.ts. */
 export const BUILD_COMMIT = process.env.NEXT_PUBLIC_BUILD_COMMIT || "dev";

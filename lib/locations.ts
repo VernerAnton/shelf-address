@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/cloudflare";
+import { getBucket, getDb } from "@/lib/cloudflare";
 import { addressKey, cleanAddress, isSimilarAddress } from "@/lib/address";
 import {
   allowedChildKinds,
@@ -377,7 +377,12 @@ export async function deleteLocation(id: string): Promise<{ parentId: string | n
     );
   }
 
-  await db.prepare("DELETE FROM locations WHERE id = ?").bind(id).run();
+  const deleted = await db
+    .prepare("DELETE FROM locations WHERE id = ? RETURNING map_image_id")
+    .bind(id)
+    .first<{ map_image_id: string | null }>();
+  // A site's map photo goes with it (§5).
+  if (deleted?.map_image_id) await (await getBucket()).delete(deleted.map_image_id);
   return { parentId: row.parent_id };
 }
 

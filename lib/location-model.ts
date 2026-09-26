@@ -124,3 +124,18 @@ export function pathIn(locations: Location[], id: string): Location[] {
   }
   return path;
 }
+
+/**
+ * Places that get an instructions panel (§3, spec-corrections §14): every
+ * shelf, and any section with its own address — anywhere a person can be
+ * sent to by address.
+ */
+export function canHavePanel(location: Pick<Location, "kind" | "address">): boolean {
+  return location.kind === "shelf" || (location.kind === "node" && Boolean(location.address));
+}
+
+/** The nearest place at or above the end of `path` that can have a panel. */
+export function panelOwner(path: Location[]): Location | null {
+  for (let i = path.length - 1; i >= 0; i--) if (canHavePanel(path[i])) return path[i];
+  return null;
+}

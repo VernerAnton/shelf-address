@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   allowedChildKinds,
   canHaveAddress,
+  canHavePanel,
+  panelOwner,
   nearestAddressed,
   requiresAddress,
   whyCannotPlace,
@@ -96,5 +98,23 @@ describe("addresses by kind", () => {
     expect([requiresAddress("shelf"), canHaveAddress("shelf")]).toEqual([true, true]);
     expect([requiresAddress("node"), canHaveAddress("node")]).toEqual([false, true]);
     expect([requiresAddress("site"), canHaveAddress("site")]).toEqual([false, false]);
+  });
+});
+
+describe("instruction panels", () => {
+  const addressed = (l: Location, address: string): Location => ({ ...l, address });
+
+  it("go on shelves and addressed sections only", () => {
+    expect(canHavePanel(shelf)).toBe(true);
+    expect(canHavePanel(addressed(room, "Torikatu 3"))).toBe(true);
+    expect(canHavePanel(room)).toBe(false);
+    expect(canHavePanel(store)).toBe(false);
+  });
+
+  it("the governing panel is the nearest eligible place at or above", () => {
+    expect(panelOwner([store, room, shelf, row])?.id).toBe("shelf");
+    expect(panelOwner([store, room, shelf])?.id).toBe("shelf");
+    expect(panelOwner([store, addressed(room, "Torikatu 3"), shelf, row])?.id).toBe("shelf");
+    expect(panelOwner([store, room])).toBeNull();
   });
 });

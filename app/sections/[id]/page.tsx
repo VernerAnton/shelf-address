@@ -4,11 +4,16 @@ import { PencilIcon } from "@/components/icons";
 import { displayAddress } from "@/lib/address";
 import {
   allowedChildKinds,
+  canHavePanel,
   getPath,
   listChildren,
   nearestAddressed,
   siteOf,
 } from "@/lib/locations";
+import { getSiteMap } from "@/lib/maps";
+import { getPanel, guidanceFor, panelEntries } from "@/lib/panels";
+import { MapLink } from "../_components/map-link";
+import { GuidanceCard, InstructionsCard } from "../_components/instructions";
 import { listCopiesAt } from "@/lib/copies";
 import { AddButton } from "../_components/add-button";
 import { BooksHere } from "../_components/books-here";
@@ -26,8 +31,18 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
   const location = path.at(-1);
   if (!location) notFound();
 
-  const [children, copies] = await Promise.all([listChildren(id), listCopiesAt(id)]);
+  const ownsPanel = canHavePanel(location);
   const site = siteOf(path);
+  const [children, copies, ownPanel, entries, guidance, mapSrc] = await Promise.all([
+    listChildren(id),
+    listCopiesAt(id),
+    ownsPanel ? getPanel(id) : null,
+    ownsPanel ? panelEntries(id) : [],
+    ownsPanel ? null : guidanceFor(path),
+    site ? getSiteMap(site.id) : null,
+  ]);
+  // Notes for the places listed below come from whichever panel covers them.
+  const notes = ownPanel?.notes ?? guidance?.panel.notes ?? {};
   // No address of its own: say which addressed place it's inside, since
   // that's the answer a book logged here will give.
   const inside = location.address ? null : nearestAddressed(path.slice(0, -1));
@@ -76,10 +91,14 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
         </Link>
       </header>
 
+      {site && <MapLink site={site} hasMap={Boolean(mapSrc)} own={site.id === id} />}
+      {ownsPanel && <InstructionsCard owner={location} panel={ownPanel} entries={entries} />}
+      {guidance && <GuidanceCard guidance={guidance} />}
+
       {children.length > 0 ? (
         <>
           <ListHeader count={children.length} orderHref={`/sections/order?parent=${id}`} />
-          <LocationList locations={children} />
+          <LocationList locations={children} notes={notes} />
         </>
       ) : copies.length === 0 ? (
         <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-muted">

@@ -15,7 +15,14 @@ function summary(location: LocationWithCounts): string {
   return parts.join(" · ");
 }
 
-export function LocationList({ locations }: { locations: LocationWithCounts[] }) {
+/** `notes`: the governing instructions panel's note for each place, if any. */
+export function LocationList({
+  locations,
+  notes = {},
+}: {
+  locations: LocationWithCounts[];
+  notes?: Record<string, string>;
+}) {
   return (
     <ul className="overflow-hidden rounded-xl border border-line bg-surface">
       {locations.map((location) => {
@@ -43,6 +50,9 @@ export function LocationList({ locations }: { locations: LocationWithCounts[] })
                   {KIND_LABEL[location.kind]}
                   {detail && ` · ${detail}`}
                 </span>
+                {notes[location.id] && (
+                  <span className="mt-0.5 line-clamp-2 block text-sm">{notes[location.id]}</span>
+                )}
               </span>
               <ChevronRightIcon className="size-5 shrink-0 text-muted" />
             </Link>

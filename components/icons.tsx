@@ -122,3 +122,9 @@ export const ClockIcon = (p: IconProps) => (
     <path d="M12 7.5V12l3 2" />
   </Icon>
 );
+
+export const MapIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 4 3 6.5v13.5L9 17.5l6 2.5 6-2.5V4l-6 2.5L9 4ZM9 4v13.5M15 6.5V20" />
+  </Icon>
+);

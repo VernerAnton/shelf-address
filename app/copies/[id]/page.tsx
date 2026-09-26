@@ -6,6 +6,10 @@ import { countSameBarcode, getCopy } from "@/lib/copies";
 import { editionKind, keyLabel } from "@/lib/edition-key";
 import { kickLookups } from "@/lib/editions";
 import { getPath, nearestAddressed, siteOf } from "@/lib/locations";
+import { getSiteMap } from "@/lib/maps";
+import { guidanceFor } from "@/lib/panels";
+import { MapIcon } from "@/components/icons";
+import { GuidanceCard } from "@/app/sections/_components/instructions";
 import { Breadcrumb } from "@/app/sections/_components/breadcrumb";
 import { markReviewedAction, retryLookupAction } from "../actions";
 import { ConditionForm, DeleteCopy, EditDetails } from "../copy-forms";
@@ -31,6 +35,7 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
   const [path, sameBarcode] = await Promise.all([getPath(copy.locationId), countSameBarcode(copy.id)]);
   const place = path.at(-1);
   const site = siteOf(path);
+  const [guidance, mapSrc] = await Promise.all([guidanceFor(path), site ? getSiteMap(site.id) : null]);
   const addressed = nearestAddressed(path);
   const crumbs = [
     { href: "/sections", label: "Sections" },
@@ -114,6 +119,17 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
         <p className="mt-1 text-sm text-muted">
           Logged {new Date(copy.addedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
         </p>
+        {site && mapSrc && (
+          <Link href={`/sections/${site.id}/map`} className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-accent">
+            <MapIcon className="size-4" />
+            Map of {site.label}
+          </Link>
+        )}
+        {guidance && (
+          <div className="mt-3 border-t border-line pt-3">
+            <GuidanceCard guidance={guidance} compact />
+          </div>
+        )}
       </section>
 
       <ConditionForm id={copy.id} condition={copy.condition} />

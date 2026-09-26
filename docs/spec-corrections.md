@@ -238,3 +238,30 @@ book's ISBN. Such a copy is looked up "successfully" as the wrong book.
 - **"Edit details"** is now on every book page, for smaller fixes (a typo, a
   translator shown as author). It changes the details for every copy of that
   edition, and says so.
+
+## 14. Instructions panels and the reference map.
+
+**Adds to:** spec §3 and §5.
+
+- **Who has a panel:** every shelf, and every section that has an address
+  (§9) — the places you'd walk to. Sites and unaddressed sections don't.
+  A place inside follows the nearest panel above it; an addressed section
+  inside a shelf has its own panel, and the shelf's panel stops at it.
+- **Stored in its own `panels` table** (`migrations/0005_panels.sql`), not in
+  `locations.instructions`: that column's CHECK allows shelves only, and
+  widening it would mean rebuilding `locations` again. `locations.instructions`
+  stays, unused. A panel whose section later loses its address is kept but
+  not shown, so nothing typed is lost; deleting the place deletes its panel.
+- **Notes are keyed by place id**, not by label, so renaming or reordering a
+  row keeps its note; notes for places no longer inside are dropped on the
+  next save. Each note starts as one line and grows with the text.
+- **Shown where it helps:** the owner's page shows the panel with a pencil to
+  edit; each place inside shows its own note on the way down plus "How to
+  find a book here"; list rows carry their note as a subtitle; a book's page
+  shows the same guidance under "Where it is".
+- **History:** only the "Updated <date>" of the last save — no version log.
+- **Reference map:** a photo (of a sketch, a floor plan) uploaded per site.
+  The phone shrinks it to at most 2000 px before upload. Stored in R2 under
+  `maps/`, replaced or removed from the map page, and deleted with its site.
+  Linked from the site, every place inside it, and every book logged there.
+  Still tied to nothing else (§5).

@@ -8,13 +8,14 @@ spec in [`docs/spec.md`](docs/spec.md); decisions taken since the spec was
 written are in [`docs/spec-corrections.md`](docs/spec-corrections.md) and
 override it where they conflict.
 
-**Status: Phase 4 (lookup and catalog) complete.** Live at
+**Status: Phase 5 complete — all phases built.** Live at
 <https://shelf-address.verner-sdr.workers.dev>. Places can be built, moved
 and reordered; books are scanned (or typed, or found by title when they have
 no barcode) and logged where you stand, with or without signal; titles,
 authors and covers are looked up from Finna, Google Books and Open Library;
-the Catalog tab finds any book and says where every copy is. Next: Phase 5,
-the per-shelf instructions panel and the site reference map.
+the Catalog tab finds any book and says where every copy is. Each shelf (and
+addressed section) has an instructions panel for finding books in it, and
+each site can have a photo of its map.
 
 ## Stack
 
@@ -200,6 +201,8 @@ lib/scan-queue.ts     offline queue rules (pure, unit tested)
 lib/lookup/           Finna / Google Books / Open Library parsers and chain (tested on recorded responses)
 lib/editions.ts       lookup runner, covers into R2, retries
 lib/catalog.ts        Catalog search: every copy and where it is
+lib/panels.ts         instructions panels: notes per place inside, "how to find"
+lib/maps.ts           site reference map photos in R2
 lib/client/           phone-side storage (IndexedDB) and upload sync
 public/sw.js          service worker: Scan tab opens with no signal
 migrations/           D1 schema, applied in filename order
@@ -217,7 +220,8 @@ docs/                 design spec and decisions taken since
 
 Rules the spec calls DECIDED are enforced by the database itself rather than
 left to application code — a site is always a root, `address` and
-`instructions` belong to shelves only, sites never carry an address (shelves
+`instructions` belong to shelves only (panels now live in their own table,
+`docs/spec-corrections.md` §14), sites never carry an address (shelves
 must, sections may), the reference map belongs to sites only,
 a copy can never be shelved directly at a site, and every address is unique
 across every site (on `address_key`, which folds case including Ä/Ö/Å).

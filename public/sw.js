@@ -120,6 +120,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cdn-cgi/")) return;
+  // Book covers: immutable and potentially thousands of them — left to the
+  // browser's own HTTP cache rather than piled into this worker's caches.
+  if (url.pathname.startsWith("/covers/")) return;
 
   if (url.pathname.startsWith("/_next/static/")) {
     event.respondWith(cacheFirst(request));

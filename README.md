@@ -8,12 +8,13 @@ spec in [`docs/spec.md`](docs/spec.md); decisions taken since the spec was
 written are in [`docs/spec-corrections.md`](docs/spec-corrections.md) and
 override it where they conflict.
 
-**Status: Phase 3 (scanning) complete.** Live at
-<https://shelf-address.verner-sdr.workers.dev>. Places (sites, shelves,
-sections) can be built, moved and reordered; books can be scanned with the
-phone camera or typed in and logged at the place you're standing, including
-with no signal. Book lookup — titles, authors, covers (Phase 4) — is next;
-until then books show their ISBN.
+**Status: Phase 4 (lookup and catalog) complete.** Live at
+<https://shelf-address.verner-sdr.workers.dev>. Places can be built, moved
+and reordered; books are scanned (or typed, or found by title when they have
+no barcode) and logged where you stand, with or without signal; titles,
+authors and covers are looked up from Finna, Google Books and Open Library;
+the Catalog tab finds any book and says where every copy is. Next: Phase 5,
+the per-shelf instructions panel and the site reference map.
 
 ## Stack
 
@@ -112,6 +113,18 @@ With Cloudflare Access on, the login lasts for the Access *session duration*
 (default 24 hours) before a new email code is needed. Lengthen it in Zero
 Trust → Access → Applications → the app → session duration.
 
+### Optional: a Google Books API key
+
+Lookups try Finna, then Google Books, then Open Library. Without a key,
+Google Books usually refuses (its shared free quota is used up), and lookups
+simply move on to Open Library. A free key makes Google a real second source:
+
+1. In the Google Cloud console, create a project, enable the **Books API**, and
+   create an **API key** (restrict it to the Books API).
+2. In Cloudflare: **Workers & Pages** → **shelf-address** → **Settings** →
+   **Variables and Secrets** → **Add**, type **Secret**, name
+   `GOOGLE_BOOKS_API_KEY`, value the key.
+
 ### Optional: deploy automatically on every push
 
 `.github/workflows/deploy.yml` deploys `main` to Cloudflare on push. It stays
@@ -184,6 +197,9 @@ components/app-update.tsx  "A newer version is ready" prompt; registers the serv
 lib/isbn.ts           ISBN-13 validation, ISBN-10 conversion
 lib/copies.ts         copy (physical book) queries and writes
 lib/scan-queue.ts     offline queue rules (pure, unit tested)
+lib/lookup/           Finna / Google Books / Open Library parsers and chain (tested on recorded responses)
+lib/editions.ts       lookup runner, covers into R2, retries
+lib/catalog.ts        Catalog search: every copy and where it is
 lib/client/           phone-side storage (IndexedDB) and upload sync
 public/sw.js          service worker: Scan tab opens with no signal
 migrations/           D1 schema, applied in filename order

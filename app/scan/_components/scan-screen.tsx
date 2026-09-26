@@ -13,6 +13,7 @@ import {
 } from "@/lib/client/scan-store";
 import { CameraScanner } from "./camera-scanner";
 import { ManualEntry } from "./manual-entry";
+import { NoBarcode } from "./no-barcode";
 import { PlacePicker } from "./place-picker";
 import { RecentScans } from "./recent-scans";
 import { SyncStatus } from "./sync-status";
@@ -37,7 +38,7 @@ export function ScanScreen() {
 
   const onIsbn = useCallback(async (isbn13: string) => {
     await logScan(isbn13);
-    setLastLogged(isbn13);
+    setLastLogged(formatIsbn(isbn13));
   }, []);
 
   if (!state.ready) {
@@ -102,15 +103,18 @@ export function ScanScreen() {
 
       {lastLogged && (
         <p role="status" aria-live="polite" className="text-center text-sm text-muted">
-          Logged <span className="font-mono font-medium text-foreground">{formatIsbn(lastLogged)}</span>
+          Logged <span className="font-medium text-foreground">{lastLogged}</span>
         </p>
       )}
 
       <ManualEntry disabled={!canScan} onIsbn={onIsbn} />
 
+      <NoBarcode disabled={!canScan} online={state.online} onPicked={setLastLogged} />
+
       <RecentScans
         recent={state.recent}
         queue={state.queue}
+        editions={state.editions}
         activePlaceId={active ? state.activePlaceId : null}
         activePlaceLabel={active?.place.label ?? null}
       />

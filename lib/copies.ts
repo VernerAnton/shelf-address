@@ -1,5 +1,7 @@
 import { getDb } from "@/lib/cloudflare";
-import { isIsbn13 } from "@/lib/isbn";
+import { editionKind } from "@/lib/edition-key";
+import { EDITION_COLUMNS, toEdition, type Edition } from "@/lib/editions";
+import { editionSearchText } from "@/lib/search";
 
 /**
  * Copies: one row per physical book (spec §2.3, as amended in
@@ -14,11 +16,12 @@ import { CONDITIONS, isCondition } from "@/lib/copy-model";
 
 export type Copy = {
   id: string;
+  /** The edition key: an ISBN-13, or finna:/manual: for a book without one. */
   isbn13: string;
   locationId: string;
   condition: string | null;
   addedAt: string;
-  title: string | null;
+  edition: Edition;
 };
 
 /**
@@ -85,41 +88,95 @@ async function checkPlace(db: D1Database, locationId: unknown): Promise<string> 
 
 export type NewCopy = {
   id: unknown;
-  isbn13: unknown;
+  /** Edition key. `isbn13` is the name older phones' queued scans use. */
+  editionKey?: unknown;
+  isbn13?: unknown;
+  /** Details for a book without an ISBN (finna: or manual: key). */
+  edition?: unknown;
   locationId: unknown;
   condition?: unknown;
   scannedAt?: unknown;
 };
 
+type Details = { title: string; author: string | null; publisher: string | null; year: number | null };
+
+function text(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.trim().replace(/\s+/g, " ");
+  if (cleaned.length > max) throw new CopyError(`Keep it under ${max} characters.`, 400);
+  return cleaned || null;
+}
+
+/** Title/author/year sent with a barcode-less book. */
+export function checkDetails(value: unknown, { requireTitle }: { requireTitle: boolean }): Details | null {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const title = text(v.title, 300);
+  if (!title) {
+    if (requireTitle) throw new CopyError("A book without an ISBN needs a title.", 400);
+    return null;
+  }
+  const yearNumber = typeof v.year === "number" ? v.year : typeof v.year === "string" && v.year.trim() ? Number(v.year) : null;
+  if (yearNumber !== null && (!Number.isInteger(yearNumber) || yearNumber < 1450 || yearNumber > new Date().getFullYear() + 1)) {
+    throw new CopyError("That year doesn't look right.", 400);
+  }
+  return { title, author: text(v.author, 200), publisher: text(v.publisher, 200), year: yearNumber };
+}
+
 /** Logs one physical copy. Returns created: false if this id was already stored. */
-export async function createCopy(input: NewCopy): Promise<{ created: boolean }> {
+export async function createCopy(input: NewCopy): Promise<{ created: boolean; editionKey: string }> {
   const db = await getDb();
   const id = checkId(input.id);
-  if (typeof input.isbn13 !== "string" || !isIsbn13(input.isbn13)) {
-    throw new CopyError("That isn't a valid book ISBN.", 400);
-  }
-  const isbn13 = input.isbn13;
+  const key = input.editionKey ?? input.isbn13;
+  const kind = typeof key === "string" ? editionKind(key) : null;
+  if (typeof key !== "string" || !kind) throw new CopyError("That isn't a valid book ISBN.", 400);
   const condition = checkCondition(input.condition);
   const addedAt = checkScannedAt(input.scannedAt);
+  const details = kind === "isbn" ? null : checkDetails(input.edition, { requireTitle: kind === "manual" });
 
   const existing = await db.prepare("SELECT 1 AS found FROM copies WHERE id = ?").bind(id).first();
-  if (existing) return { created: false };
+  if (existing) return { created: false, editionKey: key };
 
   const locationId = await checkPlace(db, input.locationId);
 
-  // A placeholder edition so the copy has something to point at. Phase 4's
-  // lookup fills in title, author and cover where fetched_at is still NULL.
+  // The edition row the copy points at. For a scanned ISBN it's a placeholder
+  // the lookup chain fills in (lib/editions.ts). A Finna pick arrives with
+  // the details shown in the search, so it's findable at once; its lookup
+  // then replaces them with Finna's own record. A typed-in book is kept as
+  // typed and flagged for review.
+  const edition =
+    kind === "isbn"
+      ? db
+          .prepare("INSERT OR IGNORE INTO editions (isbn13, search_text) VALUES (?, ?)")
+          .bind(key, editionSearchText({ key, title: null, author: null }))
+      : db
+          .prepare(
+            `INSERT OR IGNORE INTO editions
+               (isbn13, title, author, publisher, year, source, lookup_status, needs_review, search_text)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            key,
+            details?.title ?? null,
+            details?.author ?? null,
+            details?.publisher ?? null,
+            details?.year ?? null,
+            kind === "manual" ? "manual" : "finna",
+            kind === "manual" ? "skipped" : "pending",
+            kind === "manual" ? 1 : 0,
+            editionSearchText({ key, title: details?.title ?? null, author: details?.author ?? null, publisher: details?.publisher }),
+          );
+
   await db.batch([
-    db.prepare("INSERT OR IGNORE INTO editions (isbn13) VALUES (?)").bind(isbn13),
+    edition,
     db
       .prepare(
         `INSERT INTO copies (id, isbn13, location_id, condition, added_at)
          VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(id) DO NOTHING`,
       )
-      .bind(id, isbn13, locationId, condition, addedAt),
+      .bind(id, key, locationId, condition, addedAt),
   ]);
-  return { created: true };
+  return { created: true, editionKey: key };
 }
 
 /** Removes a copy. Removing one that's already gone is not an error. */
@@ -147,16 +204,13 @@ export async function moveCopy(id: unknown, locationId: unknown): Promise<void> 
   if (result.meta.changes === 0) throw new CopyError("That book is no longer logged.", 404);
 }
 
+const COPY_SELECT = `SELECT c.id, c.location_id, c.condition, c.added_at,
+  ${EDITION_COLUMNS.split(", ").map((col) => `e.${col}`).join(", ")}
+  FROM copies c JOIN editions e ON e.isbn13 = c.isbn13`;
+
 export async function getCopy(id: string): Promise<Copy | null> {
   const db = await getDb();
-  const row = await db
-    .prepare(
-      `SELECT c.id, c.isbn13, c.location_id, c.condition, c.added_at, e.title
-       FROM copies c LEFT JOIN editions e ON e.isbn13 = c.isbn13
-       WHERE c.id = ?`,
-    )
-    .bind(id)
-    .first<CopyRow>();
+  const row = await db.prepare(`${COPY_SELECT} WHERE c.id = ?`).bind(id).first<CopyRow>();
   return row ? toCopy(row) : null;
 }
 
@@ -164,24 +218,28 @@ export async function getCopy(id: string): Promise<Copy | null> {
 export async function listCopiesAt(locationId: string): Promise<Copy[]> {
   const db = await getDb();
   const { results } = await db
-    .prepare(
-      `SELECT c.id, c.isbn13, c.location_id, c.condition, c.added_at, e.title
-       FROM copies c LEFT JOIN editions e ON e.isbn13 = c.isbn13
-       WHERE c.location_id = ?
-       ORDER BY c.added_at DESC, c.id`,
-    )
+    .prepare(`${COPY_SELECT} WHERE c.location_id = ? ORDER BY c.added_at DESC, c.id`)
     .bind(locationId)
     .all<CopyRow>();
   return results.map(toCopy);
 }
 
-type CopyRow = {
+/** Every copy of the given editions, for the Catalog. */
+export async function listCopiesOf(keys: string[]): Promise<Copy[]> {
+  if (keys.length === 0) return [];
+  const db = await getDb();
+  const { results } = await db
+    .prepare(`${COPY_SELECT} WHERE c.isbn13 IN (${keys.map(() => "?").join(",")}) ORDER BY c.added_at DESC`)
+    .bind(...keys)
+    .all<CopyRow>();
+  return results.map(toCopy);
+}
+
+type CopyRow = Parameters<typeof toEdition>[0] & {
   id: string;
-  isbn13: string;
   location_id: string;
   condition: string | null;
   added_at: string;
-  title: string | null;
 };
 
 function toCopy(row: CopyRow): Copy {
@@ -191,6 +249,6 @@ function toCopy(row: CopyRow): Copy {
     locationId: row.location_id,
     condition: row.condition,
     addedAt: row.added_at,
-    title: row.title,
+    edition: toEdition(row),
   };
 }

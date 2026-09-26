@@ -8,14 +8,24 @@
  * are merged on the phone and the network never sees the first.
  */
 
+/** Title/author/year for a book without an ISBN, sent with its first copy. */
+export type EditionDetails = {
+  title: string;
+  author: string | null;
+  year: number | null;
+  publisher: string | null;
+};
+
 export type Op =
   | {
       kind: "create";
       copyId: string;
+      /** The edition key: an ISBN-13, or finna:/manual: for a book without one. */
       isbn13: string;
       locationId: string;
       condition: string | null;
       scannedAt: string;
+      edition?: EditionDetails;
     }
   | { kind: "delete"; copyId: string }
   | { kind: "condition"; copyId: string; condition: string | null };

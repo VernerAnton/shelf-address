@@ -182,3 +182,42 @@ Also from the first real-world test: the Scan tab's recent-scans list now
 shows only what was scanned into the **current** place, with scans from other
 places folded under "Recent scans in other places". Previously one list mixed
 every place, which read as if books scanned into Row 1 were in Row 2.
+
+## 12. Book lookup, books without a barcode, and the Catalog (Phase 4).
+
+**Implements** §2.2 and the §1 "retrieve" step; **resolves** §2.2's open
+item on pre-ISBN stock (§9 item 1).
+
+- **Lookup chain as specified — Finna → Google Books → Open Library —** run on
+  the server after each scan has been saved, so scanning never waits on it and
+  an offline scan is looked up once it uploads. Details come from the first
+  source that knows the book; the cover from the first source that has one
+  (Finna rarely does for older titles), then Open Library's covers-by-ISBN.
+- **Covers are downloaded once into R2** and served from there (`/covers/…`),
+  never hotlinked (§2.2).
+- **Finna's ISBN search is fuzzy** (it returns other books, and some library
+  records are miscatalogued), so only records listing the exact ISBN count and
+  they vote on the title. Where a record gives no roles, only the first-listed
+  person is shown as author, so translators aren't presented as co-authors.
+- **Temporary failures are retried** (paused between tries, up to six); only
+  when every source actually answered "unknown" is a book marked not found.
+  A book page offers "Look up now" / "Try again", and details can be entered
+  by hand for a book no source knows.
+- **Google Books needs an API key in practice:** without one it shares an
+  anonymous daily quota that was exhausted when this was built. The app works
+  without it (the chain moves on), and uses `GOOGLE_BOOKS_API_KEY` if set as
+  a Worker secret.
+- **Books without a barcode:** search Finna by title/author, pick the edition
+  (printed books only, one entry per edition). A pick that has an ISBN is
+  logged under it, joining any scanned copies. One without is keyed
+  `finna:<record id>`. Not listed, or no signal: type title/author/year by
+  hand — keyed `manual:<uuid>`, marked **needs review**. `editions.isbn13`
+  holds these keys; the column name is kept to avoid rebuilding two tables.
+- **Catalog tab:** search by title, author or ISBN (including ISBN-10 as
+  printed in older books), Finnish-aware. Each result lists every copy with
+  its address — the nearest address above where it was logged — the exact
+  place, and condition. A "Needs review" list collects hand-entered books.
+- Condition hint: **K1 worst · K5 best.**
+
+Implemented in `migrations/0004_edition_lookup.sql`, `lib/lookup/`,
+`lib/editions.ts`, `lib/catalog.ts`.

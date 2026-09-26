@@ -170,6 +170,31 @@ rejects(
   `INSERT INTO editions (isbn13, title, source) VALUES ('9780000000001', 'X', 'chatgpt')`,
 );
 
+// --- Phase 4: lookup state, review flag (0004) -----------------------------
+{
+  const row = db.prepare("SELECT lookup_status, lookup_attempts, needs_review FROM editions WHERE isbn13 = '9789510366868'").get();
+  if (row.lookup_status !== "pending" || row.lookup_attempts !== 0 || row.needs_review !== 0) {
+    failures.push(`new editions should start pending / 0 attempts / not flagged, got ${JSON.stringify(row)}`);
+  } else passed++;
+}
+rejects(
+  "an unknown lookup status",
+  `UPDATE editions SET lookup_status = 'maybe' WHERE isbn13 = '9789510366868'`,
+);
+rejects(
+  "a needs_review value other than 0 or 1",
+  `UPDATE editions SET needs_review = 2 WHERE isbn13 = '9789510366868'`,
+);
+allows(
+  "a barcode-less edition keyed by its Finna record",
+  `INSERT INTO editions (isbn13, title, source, lookup_status) VALUES ('finna:keski.334708', 'Sinuhe egyptiläinen', 'finna', 'found')`,
+);
+allows(
+  "a typed-in edition flagged for review",
+  `INSERT INTO editions (isbn13, title, author, source, lookup_status, needs_review)
+     VALUES ('manual:0b7c1a52-3f5e-4b8e-9d2a-1c9e7f3a6b10', 'Vanha kirja', 'Tuntematon', 'manual', 'skipped', 1)`,
+);
+
 // --- §2.3 copies -----------------------------------------------------------
 allows(
   "a copy shelved at a shelf",

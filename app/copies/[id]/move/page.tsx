@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRightIcon } from "@/components/icons";
 import { getCopy } from "@/lib/copies";
-import { formatIsbn } from "@/lib/isbn";
+import { keyLabel } from "@/lib/edition-key";
 import { getPath, listChildren } from "@/lib/locations";
 import { Breadcrumb } from "@/app/sections/_components/breadcrumb";
 import { KIND_LABEL, KindIcon } from "@/app/sections/_components/kind";
@@ -43,7 +43,7 @@ export default async function MoveCopyPage(props: PageProps<"/copies/[id]/move">
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-5 px-4 pt-6 pb-6">
       <h1 className="text-2xl font-semibold tracking-tight break-words">
-        Move {copy.title ?? <span className="font-mono">{formatIsbn(copy.isbn13)}</span>}
+        Move {copy.edition.title ?? <span className="font-mono">{keyLabel(copy.isbn13)}</span>}
       </h1>
       <Breadcrumb crumbs={atPath.length ? crumbs : []} current={here?.label ?? "Top level"} />
 

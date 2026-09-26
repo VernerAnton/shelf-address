@@ -109,6 +109,13 @@ export async function listChildren(
     .sort(byDisplayOrder);
 }
 
+/** The whole tree in one query — small by nature (one row per place). */
+export async function listAllLocations(): Promise<Location[]> {
+  const db = await getDb();
+  const { results } = await db.prepare(`SELECT ${COLUMNS} FROM locations`).all<LocationRow>();
+  return results.map(toLocation);
+}
+
 /** Every shelf and section that has an address, A–Z by address. */
 export async function listAddressedPlaces(): Promise<AddressedPlace[]> {
   const db = await getDb();

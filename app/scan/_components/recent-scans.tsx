@@ -1,5 +1,6 @@
 "use client";
 
+import { BookCover } from "@/components/book-cover";
 import { CheckIcon, ClockIcon, WarningIcon } from "@/components/icons";
 import { ConditionChips } from "@/components/condition-chips";
 import {
@@ -7,9 +8,10 @@ import {
   retryScanHere,
   setScanCondition,
   undoScan,
+  type EditionSummary,
   type RecentScan,
 } from "@/lib/client/scan-store";
-import { formatIsbn } from "@/lib/isbn";
+import { keyLabel } from "@/lib/edition-key";
 import { statusOf, type QueuedOp } from "@/lib/scan-queue";
 
 function time(iso: string) {
@@ -19,15 +21,27 @@ function time(iso: string) {
 function ScanRow({
   scan,
   queue,
+  edition,
   showPlace,
   hasActivePlace,
 }: {
   scan: RecentScan;
   queue: QueuedOp[];
+  edition: EditionSummary | undefined;
   showPlace: boolean;
   hasActivePlace: boolean;
 }) {
   const { status, error } = statusOf(queue, scan.copyId);
+  const title = edition?.title ?? scan.title ?? null;
+  const author = edition?.author ?? scan.author ?? null;
+  const lookupNote =
+    status !== "saved"
+      ? null
+      : edition?.lookupStatus === "not_found"
+        ? "Not found — open the book from its place to add details"
+        : edition?.lookupStatus === "skipped"
+          ? null
+          : "Looking up title…";
   const statusLabel = status === "saved" ? "Saved" : status === "waiting" ? "Waiting to upload" : "Not saved";
   return (
     <li className="flex flex-col gap-2 border-b border-line px-4 py-3 last:border-0">
@@ -47,8 +61,21 @@ function ScanRow({
           )}
           <span className="sr-only">{statusLabel}</span>
         </span>
+        <BookCover src={edition?.coverUrl ?? null} />
         <span className="min-w-0 flex-1">
-          <span className="block font-mono font-medium">{formatIsbn(scan.isbn13)}</span>
+          {title ? (
+            <>
+              <span className="line-clamp-2 font-medium leading-snug">{title}</span>
+              <span className="block truncate text-sm text-muted">
+                {[author, keyLabel(scan.isbn13)].filter(Boolean).join(" · ")}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="block font-mono font-medium">{keyLabel(scan.isbn13)}</span>
+              {lookupNote && <span className="block text-sm text-muted">{lookupNote}</span>}
+            </>
+          )}
           <span className="block truncate text-sm text-muted">
             {time(scan.scannedAt)}
             {showPlace && ` · ${scan.placeName}`}
@@ -88,7 +115,7 @@ function ScanRow({
         <div className="pl-8">
           <ConditionChips
             value={scan.condition}
-            label={`Condition of ${formatIsbn(scan.isbn13)}`}
+            label={`Condition of ${title ?? keyLabel(scan.isbn13)}`}
             onPick={(condition) => void setScanCondition(scan.copyId, condition)}
           />
         </div>
@@ -106,11 +133,13 @@ function ScanRow({
 export function RecentScans({
   recent,
   queue,
+  editions,
   activePlaceId,
   activePlaceLabel,
 }: {
   recent: RecentScan[];
   queue: QueuedOp[];
+  editions: Record<string, EditionSummary>;
   activePlaceId: string | null;
   activePlaceLabel: string | null;
 }) {
@@ -124,6 +153,7 @@ export function RecentScans({
       key={scan.copyId}
       scan={scan}
       queue={queue}
+      edition={editions[scan.isbn13]}
       showPlace={showPlace || scan.locationId !== activePlaceId}
       hasActivePlace={activePlaceId !== null}
     />
@@ -134,7 +164,7 @@ export function RecentScans({
       <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-muted">
         {activePlaceLabel ? `Scanned into ${activePlaceLabel}` : "Recent scans"}
       </h2>
-      <p className="px-1 text-xs text-muted">Titles and covers will show here once book lookup is added.</p>
+      <p className="px-1 text-xs text-muted">Condition: K1 worst · K5 best</p>
       {here.length > 0 ? (
         <ul className="overflow-hidden rounded-xl border border-line bg-surface">
           {here.map((scan) => row(scan, false))}

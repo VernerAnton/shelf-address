@@ -17,6 +17,7 @@ import { nearestAddressed, pathIn, type Location } from "@/lib/location-model";
 import {
   discard,
   enqueue,
+  type EditionDetails,
   markFailed,
   markSent,
   nextToSend,
@@ -28,7 +29,11 @@ import { kvGet, kvSet } from "./kv";
 
 export type RecentScan = {
   copyId: string;
+  /** Edition key: ISBN-13, or finna:/manual: for a book without one. */
   isbn13: string;
+  /** Known at scan time for a book picked or typed in; otherwise from lookup. */
+  title?: string | null;
+  author?: string | null;
   locationId: string;
   /** Where it was logged, as shown at the time — survives the place being renamed or deleted. */
   placeName: string;
@@ -38,11 +43,21 @@ export type RecentScan = {
 
 export type PlacesSnapshot = { fetchedAt: string; locations: Location[] };
 
+/** What the server has found out about a scanned book (lib/editions.ts). */
+export type EditionSummary = {
+  title: string | null;
+  author: string | null;
+  coverUrl: string | null;
+  lookupStatus: "pending" | "found" | "not_found" | "skipped";
+};
+
 export type ScanState = {
   ready: boolean;
   queue: QueuedOp[];
   recent: RecentScan[];
   places: PlacesSnapshot | null;
+  /** Titles and covers of recent scans, kept so they show offline too. */
+  editions: Record<string, EditionSummary>;
   activePlaceId: string | null;
   online: boolean;
   syncing: boolean;
@@ -58,6 +73,7 @@ let state: ScanState = {
   queue: [],
   recent: [],
   places: null,
+  editions: {},
   activePlaceId: null,
   online: true,
   syncing: false,
@@ -137,14 +153,19 @@ async function apply(op: Op) {
   void flush();
 }
 
-/** Logs a copy of `isbn13` at the active place. Saved on the phone at once. */
-export async function logScan(isbn13: string): Promise<RecentScan> {
+/**
+ * Logs a copy at the active place. Saved on the phone at once. `key` is an
+ * ISBN-13, or a finna:/manual: key with `details` for a book without one.
+ */
+export async function logScan(key: string, details?: EditionDetails): Promise<RecentScan> {
   await startScanStore();
   const locationId = state.activePlaceId;
   if (!locationId) throw new Error("No active place");
   const scan: RecentScan = {
     copyId: crypto.randomUUID(),
-    isbn13,
+    isbn13: key,
+    title: details?.title ?? null,
+    author: details?.author ?? null,
     locationId,
     placeName: describePlace(state.places, locationId)?.name ?? "Unknown place",
     scannedAt: new Date().toISOString(),
@@ -154,12 +175,40 @@ export async function logScan(isbn13: string): Promise<RecentScan> {
   await apply({
     kind: "create",
     copyId: scan.copyId,
-    isbn13,
+    isbn13: key,
     locationId,
     condition: null,
     scannedAt: scan.scannedAt,
+    ...(details ? { edition: details } : {}),
   });
   return scan;
+}
+
+// ---------------------------------------------------------------------------
+// Titles and covers
+// ---------------------------------------------------------------------------
+
+const settled = (e: EditionSummary | undefined) => e !== undefined && e.lookupStatus !== "pending";
+
+/**
+ * Fetches titles and covers for recent scans that don't have them yet. The
+ * server looks books up after each upload, so a new scan shows its ISBN
+ * first and its title a few seconds later.
+ */
+export async function refreshEditions(): Promise<void> {
+  const keys = [...new Set(state.recent.map((r) => r.isbn13))].filter((k) => !settled(state.editions[k]));
+  if (keys.length === 0 || !state.online) return;
+  const response = await request("GET", `/api/editions?keys=${encodeURIComponent(keys.join(","))}`);
+  if (response.kind !== "ok") return;
+  const { editions } = response.body as { editions: ({ key: string } & EditionSummary)[] };
+  const merged = { ...state.editions };
+  for (const e of editions) {
+    merged[e.key] = { title: e.title, author: e.author, coverUrl: e.coverUrl, lookupStatus: e.lookupStatus };
+  }
+  // Only keep what the recent list still shows.
+  const live = new Set(state.recent.map((r) => r.isbn13));
+  set({ editions: Object.fromEntries(Object.entries(merged).filter(([k]) => live.has(k))) });
+  await kvSet("editions", state.editions);
 }
 
 export async function undoScan(copyId: string) {
@@ -250,7 +299,8 @@ function send(op: QueuedOp): Promise<Outcome> {
     case "create":
       return request("POST", "/api/copies", {
         id: op.copyId,
-        isbn13: op.isbn13,
+        editionKey: op.isbn13,
+        edition: op.edition,
         locationId: op.locationId,
         condition: op.condition,
         scannedAt: op.scannedAt,
@@ -269,10 +319,12 @@ function send(op: QueuedOp): Promise<Outcome> {
 export async function flush(): Promise<void> {
   if (state.syncing) return;
   set({ syncing: true });
+  let uploadedScan = false;
   try {
     for (let op = nextToSend(state.queue); op; op = nextToSend(state.queue)) {
       const outcome = await send(op);
       if (outcome.kind === "ok") {
+        uploadedScan ||= op.kind === "create";
         set({ queue: markSent(state.queue, op) });
       } else if (outcome.kind === "rejected") {
         set({ queue: markFailed(state.queue, op, outcome.error) });
@@ -283,6 +335,10 @@ export async function flush(): Promise<void> {
     }
   } finally {
     set({ syncing: false });
+  }
+  if (uploadedScan) {
+    // The lookup runs on the server just after the upload; check back shortly.
+    for (const delay of [2500, 7000, 15000]) setTimeout(() => void refreshEditions(), delay);
   }
 }
 
@@ -295,17 +351,19 @@ let started: Promise<void> | null = null;
 /** Loads saved state and starts background syncing. Safe to call repeatedly. */
 export function startScanStore(): Promise<void> {
   started ??= (async () => {
-    const [queue, recent, places, activePlaceId] = await Promise.all([
+    const [queue, recent, places, activePlaceId, editions] = await Promise.all([
       kvGet<QueuedOp[]>("queue"),
       kvGet<RecentScan[]>("recent"),
       kvGet<PlacesSnapshot>("places"),
       kvGet<string | null>("activePlaceId"),
+      kvGet<Record<string, EditionSummary>>("editions"),
     ]);
     set({
       ready: true,
       queue: queue ?? [],
       recent: recent ?? [],
       places: places ?? null,
+      editions: editions ?? {},
       activePlaceId: activePlaceId ?? null,
       online: navigator.onLine,
     });
@@ -322,9 +380,11 @@ export function startScanStore(): Promise<void> {
     });
     setInterval(() => {
       if (nextToSend(state.queue)) kick();
+      else void refreshEditions();
     }, RETRY_EVERY_MS);
 
     void refreshPlaces();
+    void refreshEditions();
     kick();
   })();
   return started;

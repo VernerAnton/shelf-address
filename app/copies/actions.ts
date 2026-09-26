@@ -1,7 +1,9 @@
 "use server";
 
+import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { CopyError, deleteCopy, getCopy, moveCopy, setCondition } from "@/lib/copies";
+import { CopyError, checkDetails, deleteCopy, getCopy, moveCopy, setCondition } from "@/lib/copies";
+import { markReviewed, retryLookup, saveEditionDetails } from "@/lib/editions";
 import type { MoveState } from "@/app/sections/actions";
 
 /** `condition` is what's saved, so the chips show the result of each tap. */
@@ -51,4 +53,38 @@ export async function deleteCopyAction(
     throw error;
   }
   redirect(copy ? `/sections/${copy.locationId}` : "/sections");
+}
+
+/** "Try again" on a book whose lookup hasn't succeeded. Runs it now. */
+export async function retryLookupAction(formData: FormData): Promise<void> {
+  await retryLookup(String(formData.get("key") ?? ""));
+  refresh();
+}
+
+export type DetailsState = { status: "idle" } | { status: "error"; message: string } | { status: "saved" };
+
+/** Title/author/year typed in by hand; stays flagged unless marked reviewed. */
+export async function saveDetailsAction(_previous: DetailsState, formData: FormData): Promise<DetailsState> {
+  const key = String(formData.get("key") ?? "");
+  try {
+    const details = checkDetails(
+      { title: formData.get("title"), author: formData.get("author"), year: formData.get("year") },
+      { requireTitle: true },
+    )!;
+    await saveEditionDetails(
+      key,
+      { title: details.title, author: details.author, year: details.year },
+      { reviewed: formData.get("reviewed") === "on" },
+    );
+  } catch (error) {
+    if (error instanceof CopyError) return { status: "error", message: error.message };
+    throw error;
+  }
+  refresh();
+  return { status: "saved" };
+}
+
+export async function markReviewedAction(formData: FormData): Promise<void> {
+  await markReviewed(String(formData.get("key") ?? ""));
+  refresh();
 }

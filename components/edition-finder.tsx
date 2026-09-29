@@ -180,7 +180,7 @@ export function EditionFinder({ heading, intro, online, allowIsbn = false, onCho
 
         {search.state === "done" && !byHand &&
           (search.choices.length > 0 ? (
-            <ul aria-label="Matching editions" className="overflow-hidden rounded-xl border border-line bg-surface">
+            <ul aria-label="Matching editions" className="shrink-0 overflow-hidden rounded-xl border border-line bg-surface">
               {search.choices.map((c) => (
                 <li key={c.finnaId} className="border-b border-line last:border-0">
                   <button type="button" onClick={() => pick(c)} className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-line/50">

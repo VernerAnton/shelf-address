@@ -67,7 +67,7 @@ export function PlacePicker({ locations, startAt, onChoose, onCancel, staleNote 
         </nav>
 
         {children.length > 0 ? (
-          <ul className="overflow-hidden rounded-xl border border-line bg-surface">
+          <ul className="shrink-0 overflow-hidden rounded-xl border border-line bg-surface">
             {children.map((child) => {
               const inside = childCount(child.id);
               return (

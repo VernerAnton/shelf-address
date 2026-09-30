@@ -21,6 +21,8 @@ export type Copy = {
   locationId: string;
   condition: string | null;
   addedAt: string;
+  /** Not found when its place was last reviewed (§16); null when accounted for. */
+  missingSince: string | null;
   edition: Edition;
 };
 
@@ -40,7 +42,7 @@ export class CopyError extends Error {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function checkId(id: unknown): string {
+export function checkId(id: unknown): string {
   if (typeof id !== "string" || !UUID.test(id)) throw new CopyError("Invalid copy id.", 400);
   return id.toLowerCase();
 }
@@ -69,7 +71,7 @@ function checkScannedAt(value: unknown): string {
 }
 
 /** A place a book can be logged at: it must exist and must not be a site (§2.3). */
-async function checkPlace(db: D1Database, locationId: unknown): Promise<string> {
+export async function checkPlace(db: D1Database, locationId: unknown): Promise<string> {
   if (typeof locationId !== "string" || !locationId) {
     throw new CopyError("Choose a place to log the book at.", 400);
   }
@@ -201,17 +203,18 @@ export async function setCondition(id: unknown, condition: unknown): Promise<voi
   if (result.meta.changes === 0) throw new CopyError("That book is no longer logged.", 404);
 }
 
+/** Moves a copy. Knowing where it is also means it's no longer missing (§16). */
 export async function moveCopy(id: unknown, locationId: unknown): Promise<void> {
   const db = await getDb();
   const target = await checkPlace(db, locationId);
   const result = await db
-    .prepare("UPDATE copies SET location_id = ? WHERE id = ?")
+    .prepare("UPDATE copies SET location_id = ?, missing_since = NULL WHERE id = ?")
     .bind(target, checkId(id))
     .run();
   if (result.meta.changes === 0) throw new CopyError("That book is no longer logged.", 404);
 }
 
-const COPY_SELECT = `SELECT c.id, c.location_id, c.condition, c.added_at,
+const COPY_SELECT = `SELECT c.id, c.location_id, c.condition, c.added_at, c.missing_since,
   ${EDITION_COLUMNS.split(", ").map((col) => `e.${col}`).join(", ")}
   FROM copies c JOIN editions e ON e.isbn13 = c.isbn13`;
 
@@ -247,6 +250,7 @@ type CopyRow = Parameters<typeof toEdition>[0] & {
   location_id: string;
   condition: string | null;
   added_at: string;
+  missing_since: string | null;
 };
 
 function toCopy(row: CopyRow): Copy {
@@ -256,6 +260,7 @@ function toCopy(row: CopyRow): Copy {
     locationId: row.location_id,
     condition: row.condition,
     addedAt: row.added_at,
+    missingSince: row.missing_since,
     edition: toEdition(row),
   };
 }
@@ -301,4 +306,42 @@ export async function countSameBarcode(copyId: string): Promise<number> {
     .bind(copyId, copyId)
     .first<{ n: number }>();
   return row?.n ?? 0;
+}
+
+/** "It's here after all": clears a copy's missing mark (§16). */
+export async function markFound(id: unknown): Promise<void> {
+  const db = await getDb();
+  await db.prepare("UPDATE copies SET missing_since = NULL WHERE id = ?").bind(checkId(id)).run();
+}
+
+/**
+ * A copy missing from one place turned up at another and was just scanned
+ * there (§16): "Is this the copy missing from Row 3?" — yes. The missing copy
+ * gets the new address and the copy the scan created is dropped, so the book
+ * is counted once. Its condition, if set on the scan, carries over.
+ *
+ * If the missing copy is gone meanwhile (removed as sold on another phone),
+ * the scanned copy is simply kept: the book is here, so it stays logged.
+ */
+export async function claimMissingCopy(
+  missingId: unknown,
+  input: { locationId: unknown; replaces: unknown },
+): Promise<{ claimed: boolean }> {
+  const db = await getDb();
+  const id = checkId(missingId);
+  const replaces = checkId(input.replaces);
+  const target = await checkPlace(db, input.locationId);
+  const missing = await db.prepare("SELECT 1 AS found FROM copies WHERE id = ?").bind(id).first();
+  if (!missing) return { claimed: false };
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE copies SET location_id = ?, missing_since = NULL,
+           condition = COALESCE((SELECT condition FROM copies WHERE id = ?), condition)
+         WHERE id = ?`,
+      )
+      .bind(target, replaces, id),
+    db.prepare("DELETE FROM copies WHERE id = ? AND id <> ?").bind(replaces, id),
+  ]);
+  return { claimed: true };
 }

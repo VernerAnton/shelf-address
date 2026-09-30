@@ -2,7 +2,7 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { CopyError, checkDetails, deleteCopy, getCopy, moveCopy, reassignCopy, setCondition } from "@/lib/copies";
+import { CopyError, checkDetails, deleteCopy, getCopy, markFound, moveCopy, reassignCopy, setCondition } from "@/lib/copies";
 import { kickLookups, markReviewed, retryLookup, saveEditionDetails } from "@/lib/editions";
 import type { MoveState } from "@/app/sections/actions";
 
@@ -82,6 +82,12 @@ export async function saveDetailsAction(_previous: DetailsState, formData: FormD
   }
   refresh();
   return { status: "saved" };
+}
+
+/** "It's here after all": clears the copy's missing mark (§16). */
+export async function markFoundAction(formData: FormData): Promise<void> {
+  await markFound(String(formData.get("id") ?? ""));
+  refresh();
 }
 
 export async function markReviewedAction(formData: FormData): Promise<void> {

@@ -16,6 +16,8 @@ export type WhereCopy = {
   id: string;
   condition: string | null;
   addedAt: string;
+  /** Not found when its place was last reviewed (§16). */
+  missingSince: string | null;
   /** The answer: "Warehouse A — Bulevard 1" — the nearest address above the copy. */
   address: string | null;
   /** The exact place, when it's more specific than the address (e.g. "Row 2"). */
@@ -40,6 +42,7 @@ async function where(copies: Copy[]): Promise<Map<string, WhereCopy[]>> {
       id: copy.id,
       condition: copy.condition,
       addedAt: copy.addedAt,
+      missingSince: copy.missingSince,
       address: addressed?.address ? displayAddress(addressed.address, site) : null,
       place: place && place.id !== addressed?.id ? place.label : "",
       trail: path.map((l) => l.label).join(" › "),
@@ -95,6 +98,19 @@ export async function needsReview(): Promise<CatalogHit[]> {
   return withCopies(results.map(toEdition).sort(byTitle));
 }
 
+/** Books with a copy marked missing by a review (§16): the pending list. */
+export async function missingBooks(): Promise<CatalogHit[]> {
+  const db = await getDb();
+  const { results } = await db
+    .prepare(
+      `SELECT ${EDITION_COLUMNS} FROM editions e
+       WHERE EXISTS (SELECT 1 FROM copies c WHERE c.isbn13 = e.isbn13 AND c.missing_since IS NOT NULL)
+       LIMIT 300`,
+    )
+    .all<Parameters<typeof toEdition>[0]>();
+  return withCopies(results.map(toEdition).sort(byTitle));
+}
+
 /** The most recently logged editions, newest first. */
 export async function recentlyLogged(limit = 10): Promise<CatalogHit[]> {
   const db = await getDb();
@@ -116,8 +132,9 @@ export async function catalogCounts() {
       `SELECT (SELECT COUNT(*) FROM copies) AS copies,
               (SELECT COUNT(DISTINCT isbn13) FROM copies) AS editions,
               (SELECT COUNT(*) FROM editions e WHERE needs_review = 1
-                 AND EXISTS (SELECT 1 FROM copies c WHERE c.isbn13 = e.isbn13)) AS review`,
+                 AND EXISTS (SELECT 1 FROM copies c WHERE c.isbn13 = e.isbn13)) AS review,
+              (SELECT COUNT(*) FROM copies WHERE missing_since IS NOT NULL) AS missing`,
     )
-    .first<{ copies: number; editions: number; review: number }>();
-  return row ?? { copies: 0, editions: 0, review: 0 };
+    .first<{ copies: number; editions: number; review: number; missing: number }>();
+  return row ?? { copies: 0, editions: 0, review: 0, missing: 0 };
 }

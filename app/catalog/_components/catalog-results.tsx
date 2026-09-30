@@ -3,6 +3,8 @@ import { BookCover } from "@/components/book-cover";
 import type { CatalogHit } from "@/lib/catalog";
 import { keyLabel } from "@/lib/edition-key";
 
+export const missingDay = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+
 /** One card per edition: what it is, then where each copy of it is. */
 export function CatalogResults({ hits }: { hits: CatalogHit[] }) {
   return (
@@ -33,6 +35,11 @@ export function CatalogResults({ hits }: { hits: CatalogHit[] }) {
                     {(copy.place || copy.condition) && (
                       <span className="block truncate text-sm text-muted">
                         {[copy.address && copy.place, copy.condition].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                    {copy.missingSince && (
+                      <span className="mt-0.5 inline-block rounded bg-warn-bg px-1.5 py-0.5 text-xs font-semibold text-warn-text">
+                        Not found in review · {missingDay(copy.missingSince)}
                       </span>
                     )}
                   </span>

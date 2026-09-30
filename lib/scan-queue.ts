@@ -3,12 +3,15 @@
  * over an array so they can be tested without a browser. The Scan screen keeps
  * the array in IndexedDB and replays it against the API, oldest first.
  *
- * Four things can be waiting to upload: a new copy, an undo, a condition
- * change, and a cover photo (§15 — the photo itself is kept on the phone under
- * its photoId, not in the queue). Where a later action cancels or updates one
+ * Six things can be waiting to upload: a new copy, an undo, a condition
+ * change, a cover photo (§15 — the photo itself is kept on the phone under
+ * its photoId, not in the queue), a finished review, and "this is the copy
+ * missing from Row 3" (both §16). Where a later action cancels or updates one
  * still waiting, the two are merged on the phone and the network never sees
  * the first.
  */
+
+import type { ReviewPayload } from "@/lib/review";
 
 /** Title/author/year for a book without an ISBN, sent with its first copy. */
 export type EditionDetails = {
@@ -32,7 +35,14 @@ export type Op =
   | { kind: "delete"; copyId: string }
   | { kind: "condition"; copyId: string; condition: string | null }
   /** A cover photographed for the copy's edition — shared by every copy of it. */
-  | { kind: "cover"; copyId: string; isbn13: string; photoId: string };
+  | { kind: "cover"; copyId: string; isbn13: string; photoId: string }
+  /**
+   * The copy missing from another place (`copyId`) is the one just scanned
+   * here as `replaces`: its address changes here and `replaces` is dropped.
+   */
+  | { kind: "claim"; copyId: string; replaces: string; locationId: string }
+  /** A finished review (lib/review.ts). `copyId` is the review's own id. */
+  | { kind: "review"; copyId: string; placeName: string; payload: ReviewPayload };
 
 export type QueuedOp = Op & {
   /** "waiting" is retried automatically; "failed" needs the person to act. */
@@ -44,6 +54,10 @@ export function enqueue(queue: QueuedOp[], op: Op): QueuedOp[] {
   const unsentCreate = queue.find((q) => q.kind === "create" && q.copyId === op.copyId);
 
   switch (op.kind) {
+    case "claim":
+    case "review":
+      return [...queue, { ...op, state: "waiting" }];
+
     case "cover":
       // A newer photo of the same book replaces one still waiting.
       return [
@@ -115,7 +129,7 @@ export type CopyStatus = "saved" | "waiting" | "failed";
 export function statusOf(queue: QueuedOp[], copyId: string): { status: CopyStatus; error?: string } {
   // A cover photo has its own status (coverUploadOf): a failed photo mustn't
   // read as a copy that wasn't saved.
-  const ops = queue.filter((q) => q.copyId === copyId && q.kind !== "cover");
+  const ops = queue.filter((q) => q.copyId === copyId && q.kind !== "cover" && q.kind !== "review");
   const failed = ops.find((q) => q.state === "failed");
   if (failed) return { status: "failed", error: failed.error };
   if (ops.length > 0) return { status: "waiting" };

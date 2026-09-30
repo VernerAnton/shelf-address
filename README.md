@@ -17,6 +17,8 @@ the Catalog tab finds any book and says where every copy is. Each shelf (and
 addressed section) has an instructions panel for finding books in it, and
 each site can have a photo of its map. A book with no cover anywhere can be
 photographed; the app finds the book's edges and straightens the picture.
+Review mode checks a shelf against what's logged there: scan everything on
+it, and the app adds what's new and lists what's missing.
 
 ## Stack
 
@@ -204,6 +206,8 @@ lib/editions.ts       lookup runner, covers into R2, retries
 lib/catalog.ts        Catalog search: every copy and where it is
 lib/panels.ts         instructions panels: notes per place inside, "how to find"
 lib/maps.ts           site reference map photos in R2
+lib/review.ts         review mode's rules (what each scan means; unit tested)
+lib/reviews.ts        review snapshot and saving on the server
 components/cover-camera.tsx  cover photo: live outline, corner handles, straighten
 public/cover-vision.js       edge detection and straightening (OpenCV.js, in a worker)
 scripts/copy-opencv.mjs      puts OpenCV.js in public/vendor (on install and build)

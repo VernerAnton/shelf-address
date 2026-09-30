@@ -230,6 +230,15 @@ rejects(
   else failures.push(`cover_by_hand should default to 0 — got ${flag}`);
 }
 
+// --- Reviews (0007) ----------------------------------------------------------
+{
+  const cols = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (cols("copies").includes("missing_since")) passed++;
+  else failures.push("copies.missing_since is missing");
+  if (cols("locations").includes("reviewed_at")) passed++;
+  else failures.push("locations.reviewed_at is missing");
+}
+
 // --- §2.3 copies -----------------------------------------------------------
 allows(
   "a copy shelved at a shelf",

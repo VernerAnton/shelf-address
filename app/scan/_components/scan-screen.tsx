@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { formatIsbn } from "@/lib/isbn";
 import {
   describePlace,
+  discardScan,
   logScan,
   refreshPlaces,
   setActivePlace,
@@ -12,6 +13,15 @@ import {
   useScanState,
 } from "@/lib/client/scan-store";
 import { prefetchVision } from "@/lib/client/cover-vision";
+import {
+  dismissSaved,
+  reviewScan,
+  ReviewStartError,
+  startReview,
+  startReviewStore,
+  useReviewState,
+} from "@/lib/client/review-store";
+import { lastScanLine, ReviewHeader, ReviewLists, ReviewSummary } from "./review-panel";
 import { CameraScanner } from "./camera-scanner";
 import { ManualEntry } from "./manual-entry";
 import { NoBarcode } from "./no-barcode";
@@ -25,13 +35,17 @@ import { SyncStatus } from "./sync-status";
  */
 export function ScanScreen() {
   const state = useScanState();
+  const review = useReviewState();
   const [picking, setPicking] = useState(false);
   const [lastLogged, setLastLogged] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
   useEffect(() => {
     // Refresh the phone's copy of the tree every time the tab opens, so newly
     // added places are pickable. Harmless with no signal: the old copy stays.
     void startScanStore().then(() => refreshPlaces());
+    void startReviewStore();
     // Get the cover camera's edge detection onto the phone while there's signal.
     prefetchVision();
   }, []);
@@ -44,8 +58,61 @@ export function ScanScreen() {
     setLastLogged(formatIsbn(isbn13));
   }, []);
 
-  if (!state.ready) {
+  const onReviewIsbn = useCallback((isbn13: string) => void reviewScan(isbn13), []);
+
+  if (!state.ready || !review.ready) {
     return <p className="p-4 text-muted">Loading…</p>;
+  }
+
+  const failedReviews = state.queue.filter((q) => q.kind === "review" && q.state === "failed");
+  const reviewNotices = (
+    <>
+      {review.saved && (
+        <div role="status" className="flex items-start gap-3 rounded-xl border border-line bg-surface p-3 text-sm">
+          <p className="flex-1">
+            <strong>Review of {review.saved.placeName} saved.</strong> {review.saved.found} found
+            {review.saved.added > 0 && `, ${review.saved.added} added`}
+            {review.saved.relocated > 0 && `, ${review.saved.relocated} address ${review.saved.relocated === 1 ? "change" : "changes"}`}
+            {review.saved.removed > 0 && `, ${review.saved.removed} removed`}
+            {review.saved.pending > 0 && `, ${review.saved.pending} pending`}.
+          </p>
+          <button type="button" onClick={dismissSaved} className="shrink-0 text-accent">
+            OK
+          </button>
+        </div>
+      )}
+      {failedReviews.map((q) =>
+        q.kind === "review" ? (
+          <div key={q.copyId} role="alert" className="flex flex-col gap-2 rounded-xl border border-danger/40 p-3 text-sm text-danger">
+            <p>
+              The review of {q.placeName} couldn&apos;t be saved: {q.error}
+            </p>
+            <button type="button" onClick={() => void discardScan(q.copyId)} className="h-9 self-start rounded-lg border border-line px-3 font-medium text-foreground">
+              Discard it
+            </button>
+          </div>
+        ) : null,
+      )}
+    </>
+  );
+
+  if (review.session) {
+    const line = lastScanLine(review.session, review.titles);
+    return (
+      <>
+        <ReviewHeader session={review.session} onFinish={() => setFinishing(true)} />
+        <SyncStatus state={state} />
+        <CameraScanner disabled={false} onIsbn={onReviewIsbn} />
+        {line && (
+          <p role="status" aria-live="polite" className="text-center text-sm">
+            {line}
+          </p>
+        )}
+        <ManualEntry disabled={false} onIsbn={onReviewIsbn} />
+        <ReviewLists session={review.session} titles={review.titles} />
+        {finishing && <ReviewSummary session={review.session} titles={review.titles} onBack={() => setFinishing(false)} />}
+      </>
+    );
   }
 
   const staleNote =
@@ -100,6 +167,32 @@ export function ScanScreen() {
         )}
       </section>
 
+      {active && active.place.kind !== "site" && (
+        <div className="-mt-2 flex flex-col gap-1">
+          <button
+            type="button"
+            disabled={review.starting}
+            onClick={async () => {
+              setReviewError(null);
+              try {
+                await startReview(active.place.id);
+              } catch (e) {
+                setReviewError(e instanceof ReviewStartError ? e.message : "Couldn't start the review. Try again.");
+              }
+            }}
+            className="h-11 rounded-xl border border-line bg-surface text-sm font-medium disabled:opacity-60"
+          >
+            {review.starting ? "Starting review…" : `Review ${active.place.label}: check what's there`}
+          </button>
+          {reviewError && (
+            <p role="alert" className="text-sm text-danger">
+              {reviewError}
+            </p>
+          )}
+        </div>
+      )}
+
+      {reviewNotices}
       <SyncStatus state={state} />
 
       <CameraScanner disabled={!canScan} onIsbn={onIsbn} />

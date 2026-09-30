@@ -3,6 +3,8 @@
  * safe to import from Client Components; lib/locations.ts holds the queries.
  */
 
+import { displayAddress } from "@/lib/address";
+
 export type LocationKind = "site" | "shelf" | "node";
 
 export type Location = {
@@ -138,4 +140,18 @@ export function canHavePanel(location: Pick<Location, "kind" | "address">): bool
 export function panelOwner(path: Location[]): Location | null {
   for (let i = path.length - 1; i >= 0; i--) if (canHavePanel(path[i])) return path[i];
   return null;
+}
+
+/**
+ * "Row 2 · Store — Bulevard 1": a place's own name, then where it's found —
+ * its address, or the one it's inside, else just its site.
+ */
+export function placeName(locations: Location[], id: string): string | null {
+  const path = pathIn(locations, id);
+  const place = path.at(-1);
+  if (!place) return null;
+  const site = siteOf(path)?.label ?? null;
+  const addressed = nearestAddressed(path);
+  const address = addressed?.address ? displayAddress(addressed.address, site) : null;
+  return [place.label, address ?? site].filter(Boolean).join(" · ");
 }

@@ -3,6 +3,7 @@ import { BookCover } from "@/components/book-cover";
 import { ChevronRightIcon } from "@/components/icons";
 import type { Copy } from "@/lib/copies";
 import { keyLabel } from "@/lib/edition-key";
+import { missingDay } from "@/app/catalog/_components/catalog-results";
 
 /** Books logged at exactly this place (books in places inside it show there). */
 export function BooksHere({ copies }: { copies: Copy[] }) {
@@ -30,6 +31,11 @@ export function BooksHere({ copies }: { copies: Copy[] }) {
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
+                {copy.missingSince && (
+                  <span className="mt-0.5 inline-block rounded bg-warn-bg px-1.5 py-0.5 text-xs font-semibold text-warn-text">
+                    Not found in review · {missingDay(copy.missingSince)}
+                  </span>
+                )}
               </span>
               <ChevronRightIcon className="size-5 shrink-0 text-muted" />
             </Link>

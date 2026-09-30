@@ -6,6 +6,7 @@ import {
   allowedChildKinds,
   canHavePanel,
   getPath,
+  getReviewedAt,
   listChildren,
   nearestAddressed,
   siteOf,
@@ -18,6 +19,7 @@ import { listCopiesAt } from "@/lib/copies";
 import { AddButton } from "../_components/add-button";
 import { BooksHere } from "../_components/books-here";
 import { ScanHereButton } from "../_components/scan-here-button";
+import { ReviewHereButton } from "../_components/review-here-button";
 import { Breadcrumb } from "../_components/breadcrumb";
 import { KIND_LABEL, KindIcon } from "../_components/kind";
 import { ListHeader } from "../_components/list-header";
@@ -33,13 +35,14 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
 
   const ownsPanel = canHavePanel(location);
   const site = siteOf(path);
-  const [children, copies, ownPanel, entries, guidance, mapSrc] = await Promise.all([
+  const [children, copies, ownPanel, entries, guidance, mapSrc, reviewedAt] = await Promise.all([
     listChildren(id),
     listCopiesAt(id),
     ownsPanel ? getPanel(id) : null,
     ownsPanel ? panelEntries(id) : [],
     ownsPanel ? null : guidanceFor(path),
     site ? getSiteMap(site.id) : null,
+    location.kind === "site" ? null : getReviewedAt(id),
   ]);
   // Notes for the places listed below come from whichever panel covers them.
   const notes = ownPanel?.notes ?? guidance?.panel.notes ?? {};
@@ -111,6 +114,12 @@ export default async function LocationPage(props: PageProps<"/sections/[id]">) {
       {location.kind !== "site" && (
         <>
           <ScanHereButton id={id} />
+          <ReviewHereButton id={id} />
+          {reviewedAt && (
+            <p className="-mt-2 text-center text-sm text-muted">
+              Last reviewed {new Date(reviewedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+            </p>
+          )}
           <BooksHere copies={copies} />
         </>
       )}

@@ -7,6 +7,7 @@ import { CameraIcon, CheckIcon, ClockIcon, WarningIcon } from "@/components/icon
 import { ConditionChips } from "@/components/condition-chips";
 import {
   addCoverPhoto,
+  answerClaim,
   discardCoverPhoto,
   discardScan,
   retryScanHere,
@@ -97,14 +98,42 @@ function ScanRow({
             {showPlace && ` · ${scan.placeName}`}
           </span>
         </span>
-        <button
-          type="button"
-          onClick={() => void undoScan(scan.copyId)}
-          className="h-9 shrink-0 rounded-lg border border-line px-3 text-sm font-medium"
-        >
-          Undo
-        </button>
+        {!scan.claimed && (
+          <button
+            type="button"
+            onClick={() => void undoScan(scan.copyId)}
+            className="h-9 shrink-0 rounded-lg border border-line px-3 text-sm font-medium"
+          >
+            Undo
+          </button>
+        )}
       </div>
+      {scan.claim && status !== "failed" && (
+        <div className="flex flex-col gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-sm text-warn-text ml-8">
+          <p>
+            A copy of this book is <strong>missing from {scan.claim.placeName}</strong>. Is this that copy?
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void answerClaim(scan.copyId, true)}
+              className="h-9 flex-1 rounded-lg bg-accent px-3 font-medium text-accent-contrast"
+            >
+              Yes — change its address to here
+            </button>
+            <button
+              type="button"
+              onClick={() => void answerClaim(scan.copyId, false)}
+              className="h-9 rounded-lg border border-line bg-surface px-3 font-medium text-foreground"
+            >
+              No, another copy
+            </button>
+          </div>
+        </div>
+      )}
+      {scan.claimed && (
+        <p className="pl-8 text-sm text-muted">Found: the copy missing from {scan.claimed.placeName}. Its address is now here.</p>
+      )}
       {offerPhoto && (
         <div className="flex items-center gap-3 pl-8">
           <button

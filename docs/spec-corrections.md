@@ -295,3 +295,35 @@ edition, and the images belong to others.
   which is what the handles are for.
 - **Offline:** the photo is saved on the phone and uploads after its scan,
   like everything else in the queue.
+
+## 16. Review mode: checking a place against what's on it.
+
+**Adds to:** spec §1 (the app never tracks sales — spec-corrections §4 — so
+sold or moved books would otherwise stay logged where they no longer are).
+
+A review is started on one place ("Review books here", or from the Scan tab)
+and covers only the books logged at exactly that place. Every book on the
+shelf is scanned; the app compares copies logged there with copies scanned,
+book by book, as a count:
+
+1. **Logged here, scanned:** ticked off. Never duplicated.
+2. **Scanned beyond what's logged here** (a book new to the system, or one
+   more copy): added here — unless the book has a copy marked missing from
+   another place, when the app asks "Is this the copy missing from Row 3?".
+   Yes changes that copy's address to here; no adds a new copy. A place's own
+   copies are never asked about, even if the same book is missing elsewhere.
+3. **Logged here, not scanned:** listed at the end with where other copies
+   are logged (information only), then **Remove (sold)** or **Leave pending**
+   (the default). Pending copies are marked missing (`copies.missing_since`),
+   listed under Catalog → "Not found in reviews", and badged on their place
+   and book pages.
+
+Books without a barcode are ticked by hand. The same "is this the missing
+copy?" question is asked in normal scanning too. The principle throughout:
+books aren't moved by the app — their address is changed to where they are.
+
+Starting needs signal once (the list of what's logged there, and the missing
+list); after that the review works offline, survives the app being closed,
+and is saved through the Scan tab's upload queue. Each place shows "Last
+reviewed" (`locations.reviewed_at`). Implemented in `migrations/0007_reviews.sql`,
+`lib/review.ts` (the rules, unit tested) and `lib/reviews.ts`.

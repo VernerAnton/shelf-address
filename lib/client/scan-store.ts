@@ -28,6 +28,7 @@ import {
   type Op,
   type QueuedOp,
 } from "@/lib/scan-queue";
+import { missingCopyFor, type MissingCopy, type ReviewPayload } from "@/lib/review";
 import { kvDelete, kvGet, kvSet } from "./kv";
 
 export type RecentScan = {
@@ -42,9 +43,18 @@ export type RecentScan = {
   placeName: string;
   scannedAt: string;
   condition: string | null;
+  /** This book has a copy missing from another place (§16): "is this that copy?" — unanswered. */
+  claim?: { copyId: string; placeName: string };
+  /** Answered yes: this row is now that copy, with its address changed here. */
+  claimed?: { placeName: string };
 };
 
-export type PlacesSnapshot = { fetchedAt: string; locations: Location[] };
+export type PlacesSnapshot = {
+  fetchedAt: string;
+  locations: Location[];
+  /** Copies marked missing by reviews (§16). Absent in copies saved before V8. */
+  missing?: MissingCopy[];
+};
 
 /** What the server has found out about a scanned book (lib/editions.ts). */
 export type EditionSummary = {
@@ -186,7 +196,12 @@ export async function logScan(key: string, details?: EditionDetails): Promise<Re
   await startScanStore();
   const locationId = state.activePlaceId;
   if (!locationId) throw new Error("No active place");
+  // A copy of this book missing from somewhere? Ask whether this is it —
+  // unless it's already being asked about, or was claimed, on this phone.
+  const asked = new Set(state.recent.flatMap((r) => (r.claim ? [r.claim.copyId] : [])));
+  const claim = missingCopyFor(state.places?.missing ?? [], key, asked);
   const scan: RecentScan = {
+    ...(claim ? { claim: { copyId: claim.copyId, placeName: claim.placeName } } : {}),
     copyId: crypto.randomUUID(),
     isbn13: key,
     title: details?.title ?? null,
@@ -234,6 +249,38 @@ export async function refreshEditions(): Promise<void> {
   const live = new Set(state.recent.map((r) => r.isbn13));
   set({ editions: Object.fromEntries(Object.entries(merged).filter(([k]) => live.has(k))) });
   await kvSet("editions", state.editions);
+}
+
+/**
+ * "Is this the copy missing from Row 3?" Yes: that copy's address changes to
+ * where this scan was logged, and the copy the scan created is dropped — the
+ * row now stands for the missing copy. No: it stays a new copy.
+ */
+export async function answerClaim(copyId: string, yes: boolean) {
+  await startScanStore();
+  const scan = state.recent.find((r) => r.copyId === copyId);
+  if (!scan?.claim) return;
+  if (!yes) {
+    set({ recent: state.recent.map((r) => (r === scan ? { ...r, claim: undefined } : r)) });
+    await persist();
+    return;
+  }
+  const missingId = scan.claim.copyId;
+  set({
+    recent: state.recent.map((r) =>
+      r === scan ? { ...r, copyId: missingId, claim: undefined, claimed: { placeName: scan.claim!.placeName } } : r,
+    ),
+    // It's found: don't ask about it again, even before the next refresh.
+    places: state.places ? { ...state.places, missing: (state.places.missing ?? []).filter((m) => m.copyId !== missingId) } : null,
+  });
+  if (state.places) await kvSet("places", state.places);
+  await apply({ kind: "claim", copyId: missingId, replaces: copyId, locationId: scan.locationId });
+}
+
+/** A finished review (§16): saved on the phone, uploaded like a scan. */
+export async function queueReview(payload: ReviewPayload, placeName: string) {
+  await startScanStore();
+  await apply({ kind: "review", copyId: payload.reviewId, placeName, payload });
 }
 
 export async function undoScan(copyId: string) {
@@ -350,6 +397,10 @@ async function request(
 
 async function send(op: QueuedOp): Promise<Outcome> {
   switch (op.kind) {
+    case "claim":
+      return request("PATCH", `/api/copies/${op.copyId}`, { locationId: op.locationId, replaces: op.replaces });
+    case "review":
+      return request("POST", "/api/reviews", op.payload);
     case "cover": {
       const bytes = await kvGet<ArrayBuffer>(`photo:${op.photoId}`);
       if (!bytes) return { kind: "rejected", error: "The photo was lost on this phone. Take it again." };
@@ -395,6 +446,8 @@ export async function flush(): Promise<void> {
           await kvSet("editions", state.editions);
         }
         setQueue(markSent(state.queue, op));
+        // A saved review changes what's marked missing everywhere.
+        if (op.kind === "review") void refreshPlaces();
       } else if (outcome.kind === "rejected") {
         setQueue(markFailed(state.queue, op, outcome.error));
       } else {

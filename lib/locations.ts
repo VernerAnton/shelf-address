@@ -110,6 +110,13 @@ export async function listChildren(
 }
 
 /** The whole tree in one query — small by nature (one row per place). */
+/** When the place was last reviewed (§16), or null. */
+export async function getReviewedAt(id: string): Promise<string | null> {
+  const db = await getDb();
+  const row = await db.prepare("SELECT reviewed_at FROM locations WHERE id = ?").bind(id).first<{ reviewed_at: string | null }>();
+  return row?.reviewed_at ?? null;
+}
+
 export async function listAllLocations(): Promise<Location[]> {
   const db = await getDb();
   const { results } = await db.prepare(`SELECT ${COLUMNS} FROM locations`).all<LocationRow>();

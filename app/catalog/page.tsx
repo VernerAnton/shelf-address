@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { catalogCounts, needsReview, recentlyLogged, searchCatalog } from "@/lib/catalog";
+import { catalogCounts, missingBooks, needsReview, recentlyLogged, searchCatalog } from "@/lib/catalog";
 import { kickLookups } from "@/lib/editions";
 import { CatalogResults } from "./_components/catalog-results";
 
@@ -10,12 +10,13 @@ export const dynamic = "force-dynamic";
  * Spec §1 item 4 — the point of the whole tool.
  */
 export default async function CatalogPage(props: PageProps<"/catalog">) {
-  const { q, review } = await props.searchParams;
+  const { q, review, missing } = await props.searchParams;
   const query = typeof q === "string" ? q.trim().slice(0, 200) : "";
   const showReview = review === "1" && !query;
+  const showMissing = missing === "1" && !query && !showReview;
 
   const [hits, counts] = await Promise.all([
-    query ? searchCatalog(query) : showReview ? needsReview() : recentlyLogged(),
+    query ? searchCatalog(query) : showReview ? needsReview() : showMissing ? missingBooks() : recentlyLogged(),
     catalogCounts(),
   ]);
   // Anything still waiting for a title gets nudged along while we're here.
@@ -67,6 +68,24 @@ export default async function CatalogPage(props: PageProps<"/catalog">) {
             <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-muted">Nothing to review.</p>
           )}
         </>
+      ) : showMissing ? (
+        <>
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-sm font-semibold">Not found in reviews ({counts.missing})</h2>
+            <Link href="/catalog" className="text-sm text-accent">
+              Back
+            </Link>
+          </div>
+          <p className="px-1 text-sm text-muted">
+            Copies a review didn&apos;t find, left pending. Scanning one on another shelf asks whether it&apos;s this copy;
+            open one to remove it as sold or mark it found.
+          </p>
+          {hits.length > 0 ? (
+            <CatalogResults hits={hits} />
+          ) : (
+            <p className="rounded-xl border border-dashed border-line p-6 text-center text-sm text-muted">Nothing pending.</p>
+          )}
+        </>
       ) : (
         <>
           <p className="px-1 text-sm text-muted">
@@ -79,6 +98,14 @@ export default async function CatalogPage(props: PageProps<"/catalog">) {
               className="flex h-12 items-center justify-between rounded-xl border border-warn-line bg-warn-bg px-4 text-sm font-medium text-warn-text"
             >
               Needs review ({counts.review})<span aria-hidden>›</span>
+            </Link>
+          )}
+          {counts.missing > 0 && (
+            <Link
+              href="/catalog?missing=1"
+              className="flex h-12 items-center justify-between rounded-xl border border-warn-line bg-warn-bg px-4 text-sm font-medium text-warn-text"
+            >
+              Not found in reviews ({counts.missing})<span aria-hidden>›</span>
             </Link>
           )}
           {hits.length > 0 && (

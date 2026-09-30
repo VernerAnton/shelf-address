@@ -11,7 +11,8 @@ import { guidanceFor } from "@/lib/panels";
 import { MapIcon } from "@/components/icons";
 import { GuidanceCard } from "@/app/sections/_components/instructions";
 import { Breadcrumb } from "@/app/sections/_components/breadcrumb";
-import { markReviewedAction, retryLookupAction } from "../actions";
+import { markFoundAction, markReviewedAction, retryLookupAction } from "../actions";
+import { missingDay } from "@/app/catalog/_components/catalog-results";
 import { ConditionForm, DeleteCopy, EditDetails } from "../copy-forms";
 import { WrongBook } from "../wrong-book";
 import { CoverPhoto } from "../cover-photo";
@@ -129,6 +130,20 @@ export default async function CopyPage(props: PageProps<"/copies/[id]">) {
         <p className="mt-1 text-sm text-muted">
           Logged {new Date(copy.addedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
         </p>
+        {copy.missingSince && (
+          <div className="mt-3 flex flex-col gap-2 rounded-lg border border-warn-line bg-warn-bg p-3 text-sm text-warn-text">
+            <p>
+              <strong>Not found</strong> when this place was reviewed on {missingDay(copy.missingSince)}. If it turns up on
+              another shelf, scan it there and say it&apos;s this copy. If it was sold, remove it below.
+            </p>
+            <form action={markFoundAction}>
+              <input type="hidden" name="id" value={copy.id} />
+              <button type="submit" className="h-9 rounded-lg border border-warn-line bg-surface px-3 font-medium text-foreground">
+                It&apos;s here after all
+              </button>
+            </form>
+          </div>
+        )}
         {site && mapSrc && (
           <Link href={`/sections/${site.id}/map`} className="mt-2 inline-flex items-center gap-2 text-sm font-medium text-accent">
             <MapIcon className="size-4" />

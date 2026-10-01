@@ -4,7 +4,16 @@ import { useState } from "react";
 import { parseIsbn } from "@/lib/isbn";
 
 /** Typing an ISBN when a barcode is damaged or missing its digits (spec §6). */
-export function ManualEntry({ disabled, onIsbn }: { disabled: boolean; onIsbn: (isbn13: string) => void }) {
+export function ManualEntry({
+  disabled,
+  onIsbn,
+  submitLabel = "Log",
+}: {
+  disabled: boolean;
+  onIsbn: (isbn13: string) => void;
+  /** The button's word: "Log" on Scan, "Look up" on Evaluate (which logs nothing). */
+  submitLabel?: string;
+}) {
   const [value, setValue] = useState("");
   const [message, setMessage] = useState<{ kind: "error" | "info"; text: string } | null>(null);
 
@@ -59,7 +68,7 @@ export function ManualEntry({ disabled, onIsbn }: { disabled: boolean; onIsbn: (
           disabled={disabled || !value.trim()}
           className="h-12 shrink-0 rounded-xl bg-accent px-4 font-medium text-accent-contrast disabled:opacity-40"
         >
-          Log
+          {submitLabel}
         </button>
       </div>
       {message && (

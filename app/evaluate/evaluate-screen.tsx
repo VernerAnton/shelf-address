@@ -193,7 +193,7 @@ export function EvaluateScreen() {
               {note}
             </p>
           )}
-          <ManualEntry disabled={false} onIsbn={onIsbn} />
+          <ManualEntry disabled={false} onIsbn={onIsbn} submitLabel="Look up" />
         </>
       )}
 
@@ -215,7 +215,7 @@ export function EvaluateScreen() {
             />
           </label>
         ))}
-        <p className="px-4 pb-3 text-xs text-muted">Saved on this phone only.</p>
+        <p className="px-4 py-3 text-xs text-muted">Saved on this phone only.</p>
       </section>
 
       {recent.length > 0 && (

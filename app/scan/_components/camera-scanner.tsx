@@ -8,6 +8,8 @@ import { onCameraClaims } from "@/lib/client/camera";
 type Props = {
   disabled: boolean;
   onIsbn: (isbn13: string) => void;
+  /** Start the camera as soon as the screen opens (Evaluate), instead of on a tap. */
+  autoStart?: boolean;
 };
 
 /**
@@ -32,7 +34,7 @@ function beep(audio: AudioContext | null) {
   osc.stop(audio.currentTime + 0.07);
 }
 
-export function CameraScanner({ disabled, onIsbn }: Props) {
+export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<Reader | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -177,6 +179,13 @@ export function CameraScanner({ disabled, onIsbn }: Props) {
   useEffect(() => {
     if (disabled && readerRef.current) stop();
   }, [disabled, stop]);
+
+  useEffect(() => {
+    // Deferred a tick so the video element is mounted and state isn't set mid-render.
+    if (!autoStart || disabled) return;
+    const timer = setTimeout(() => void start(), 0);
+    return () => clearTimeout(timer);
+  }, [autoStart, disabled, start]);
 
   // The cover camera needs the camera for a moment; hand it over and resume.
   useEffect(() => {

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookIcon, ScanIcon, TreeIcon } from "@/components/icons";
+import { BookIcon, ScanIcon, TagIcon, TreeIcon } from "@/components/icons";
 
-// §7: Scan / Sections / Catalog, validated in the prototype.
+// §7: Scan / Sections / Catalog, validated in the prototype; Evaluate added in §17.
 const TABS = [
   { href: "/scan", label: "Scan", Icon: ScanIcon },
   { href: "/sections", label: "Sections", Icon: TreeIcon },
   { href: "/catalog", label: "Catalog", Icon: BookIcon },
+  { href: "/evaluate", label: "Evaluate", Icon: TagIcon },
 ] as const;
 
 export function BottomNav() {

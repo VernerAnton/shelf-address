@@ -327,3 +327,20 @@ list); after that the review works offline, survives the app being closed,
 and is saved through the Scan tab's upload queue. Each place shows "Last
 reviewed" (`locations.reviewed_at`). Implemented in `migrations/0007_reviews.sql`,
 `lib/review.ts` (the rules, unit tested) and `lib/reviews.ts`.
+
+## 17. Evaluate: what a book sells for on Antikvaari.fi.
+
+A fourth tab, **Evaluate**, opens straight to the camera. Scanning (or typing)
+an ISBN stops the camera and shows the book with one big **Open on
+Antikvaari** link to `https://www.antikvaari.fi/hakukone?q=<ISBN-13>` — the
+search address Antikvaari publishes itself. **Scan next** starts the camera
+again. Nothing is logged; a short "Recently evaluated" list is kept on the
+phone to reopen a search.
+
+Investigated before building (2026-10-01): Antikvaari sends
+`X-Frame-Options: SAMEORIGIN`, so its pages can't be shown inside the app —
+a real iframe test was refused — and results are rendered by JavaScript.
+robots.txt allows `/hakukone`; the terms (Sopimusehdot) say nothing about
+linking, and there's no public API. So it's a plain same-tab link, nothing
+fetched, copied or proxied. In the installed app, an outside link opens over
+the app (iPhone: Done; Android: ✕) and returns to the same screen.

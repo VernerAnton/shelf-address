@@ -19,7 +19,7 @@ export function ManualEntry({ disabled, onIsbn }: { disabled: boolean; onIsbn: (
     setValue("");
     setMessage(
       parsed.convertedFrom10
-        ? { kind: "info", text: `Logged as ${parsed.isbn13} (converted from the 10-digit ISBN).` }
+        ? { kind: "info", text: `Read as ${parsed.isbn13} (converted from the 10-digit ISBN).` }
         : null,
     );
   };

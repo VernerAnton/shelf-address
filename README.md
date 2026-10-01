@@ -18,7 +18,8 @@ addressed section) has an instructions panel for finding books in it, and
 each site can have a photo of its map. A book with no cover anywhere can be
 photographed; the app finds the book's edges and straightens the picture.
 Review mode checks a shelf against what's logged there: scan everything on
-it, and the app adds what's new and lists what's missing.
+it, and the app adds what's new and lists what's missing. The Evaluate tab
+scans a book and opens its Antikvaari.fi search, to see what it sells for.
 
 ## Stack
 

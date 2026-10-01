@@ -331,11 +331,20 @@ reviewed" (`locations.reviewed_at`). Implemented in `migrations/0007_reviews.sql
 ## 17. Evaluate: what a book sells for on Antikvaari.fi.
 
 A fourth tab, **Evaluate**, opens straight to the camera. Scanning (or typing)
-an ISBN stops the camera and shows the book with one big **Open on
-Antikvaari** link to `https://www.antikvaari.fi/hakukone?q=<ISBN-13>` — the
-search address Antikvaari publishes itself. **Scan next** starts the camera
-again. Nothing is logged; a short "Recently evaluated" list is kept on the
-phone to reopen a search.
+an ISBN opens `https://www.antikvaari.fi/hakukone?q=<ISBN-13>` — the search
+address Antikvaari publishes itself. Nothing is logged; a short "Recently
+evaluated" list is kept on the phone to reopen a search.
+
+Two switches, saved per phone, both on by default because speed is the point:
+
+- **Open Antikvaari straight after a scan.** Off: the book is shown with an
+  "Open on Antikvaari" button and "Scan next".
+- **Start scanning again when I come back.** Off: the book waits on screen.
+
+With both on, the book is usually still in front of the camera on return,
+so the first read of that same book after coming back is ignored (otherwise
+it would bounce straight back to Antikvaari); move it away and back to look
+it up again. With no signal, it doesn't try to open Antikvaari.
 
 Investigated before building (2026-10-01): Antikvaari sends
 `X-Frame-Options: SAMEORIGIN`, so its pages can't be shown inside the app —

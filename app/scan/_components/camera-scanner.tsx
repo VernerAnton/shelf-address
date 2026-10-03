@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraIcon, FlashlightIcon } from "@/components/icons";
+import { backCameras, pickMainCamera, zoomSteps, type CameraDevice } from "@/lib/camera-choice";
 import { parseIsbn } from "@/lib/isbn";
 import { onCameraClaims } from "@/lib/client/camera";
 
@@ -18,10 +19,22 @@ type Props = {
  *
  * Continuous mode. A barcode is logged once while it stays in view; take it
  * away for a moment and show it again to log another copy of the same book.
+ *
+ * Help for weaker phone cameras (docs/spec-corrections.md §18):
+ * - the main back lens is chosen on purpose (lib/camera-choice.ts), with a
+ *   lens button to try the others; the choice is remembered on the phone;
+ * - continuous autofocus is asked for where the camera supports it;
+ * - a zoom button, so a book can be held far enough away to focus;
+ * - photos are decoded with the library's "try harder" mode (it can't be
+ *   used live: in @zxing/library 0.21 it silently stops the live decoder);
+ * - "Take a photo of the barcode" uses the phone's own camera app, which
+ *   focuses better than a browser, and reads the barcode from the photo.
  */
 const GONE_AFTER_MS = 1500;
+const CAMERA_KEY = "scanner:camera";
 
 type Reader = import("@zxing/library").BrowserMultiFormatReader;
+type Caps = MediaTrackCapabilities & { torch?: boolean; zoom?: { min: number; max: number }; focusMode?: string[] };
 
 function beep(audio: AudioContext | null) {
   if (!audio) return;
@@ -34,10 +47,89 @@ function beep(audio: AudioContext | null) {
   osc.stop(audio.currentTime + 0.07);
 }
 
+function storedCamera(): string | null {
+  try {
+    return localStorage.getItem(CAMERA_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storeCamera(id: string | null) {
+  try {
+    if (id) localStorage.setItem(CAMERA_KEY, id);
+    else localStorage.removeItem(CAMERA_KEY);
+  } catch {
+    // Private mode etc.: the choice just isn't remembered.
+  }
+}
+
+async function videoInputs(): Promise<CameraDevice[]> {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    return all.filter((d) => d.kind === "videoinput").map((d) => ({ deviceId: d.deviceId, label: d.label }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Book barcodes only (EAN-13). `thorough` turns on "try harder" — for still
+ * photos only: in @zxing/library 0.21 it silently stops live decoding.
+ */
+async function makeReader(thorough = false): Promise<Reader> {
+  const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("@zxing/library");
+  // Restricting the format also means the small price add-on beside a book's barcode is ignored.
+  const hints = new Map<import("@zxing/library").DecodeHintType, unknown>([
+    [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]],
+  ]);
+  if (thorough) hints.set(DecodeHintType.TRY_HARDER, true);
+  return new BrowserMultiFormatReader(hints, 200);
+}
+
+/**
+ * Reads a barcode from a photo. Phone photos are huge (50 MP on a Galaxy
+ * A26), so it's tried at a few sizes, and turned sideways in case the
+ * book was photographed on its side.
+ */
+async function decodePhoto(file: File): Promise<string | null> {
+  const bitmap = await createImageBitmap(file);
+  const reader = await makeReader(true);
+  try {
+    for (const side of [1600, 2400, 1000]) {
+      for (const turn of [0, 90]) {
+        const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+        const w = Math.round(bitmap.width * scale);
+        const h = Math.round(bitmap.height * scale);
+        const canvas = document.createElement("canvas");
+        canvas.width = turn ? h : w;
+        canvas.height = turn ? w : h;
+        const context = canvas.getContext("2d")!;
+        if (turn) {
+          context.translate(h, 0);
+          context.rotate(Math.PI / 2);
+        }
+        context.drawImage(bitmap, 0, 0, w, h);
+        try {
+          const result = await reader.decodeFromImageUrl(canvas.toDataURL("image/jpeg", 0.92));
+          return result.getText();
+        } catch {
+          // Not found at this size and angle: try the next.
+        }
+      }
+    }
+    return null;
+  } finally {
+    bitmap.close();
+    reader.reset();
+  }
+}
+
 export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const readerRef = useRef<Reader | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
   const lastRef = useRef<{ code: string; seenAt: number } | null>(null);
   const onIsbnRef = useRef(onIsbn);
   useEffect(() => {
@@ -46,10 +138,13 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
 
   const [running, setRunning] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [reading, setReading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   const [torch, setTorch] = useState<{ available: boolean; on: boolean }>({ available: false, on: false });
+  const [lenses, setLenses] = useState<{ list: CameraDevice[]; current: string | null }>({ list: [], current: null });
+  const [zoom, setZoom] = useState<{ steps: number[]; value: number }>({ steps: [], value: 1 });
 
   // Load the decoder in the background as soon as the screen opens, so the
   // service worker has it cached before the phone goes out of signal.
@@ -62,6 +157,7 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     readerRef.current = null;
     setRunning(false);
     setTorch({ available: false, on: false });
+    setZoom({ steps: [], value: 1 });
   }, []);
 
   const handleCode = useCallback((code: string) => {
@@ -86,33 +182,19 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     onIsbnRef.current(parsed.isbn13);
   }, []);
 
-  const start = useCallback(async () => {
-    setError(null);
-    setNotice(null);
-    setStarting(true);
-    // Created inside the tap so iOS allows it to make sound later.
-    try {
-      audioRef.current ??= new AudioContext();
-    } catch {
-      audioRef.current = null;
-    }
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw Object.assign(new Error("no mediaDevices"), { name: "NotSupportedError" });
-      }
-      const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("@zxing/library");
-      // Book barcodes are EAN-13 only. Restricting the format makes decoding
-      // faster and means the small price add-on barcode beside it is ignored.
-      const hints = new Map<import("@zxing/library").DecodeHintType, unknown>([
-        [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.EAN_13]],
-      ]);
-      const reader = new BrowserMultiFormatReader(hints, 200);
+  const currentTrack = () => (videoRef.current?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+
+  /** Opens one camera (a lens by id, or just "the back one") and starts decoding. */
+  const open = useCallback(
+    async (deviceId: string | null) => {
+      readerRef.current?.reset();
+      const reader = await makeReader();
       readerRef.current = reader;
       await reader.decodeFromConstraints(
         {
           audio: false,
           video: {
-            facingMode: { ideal: "environment" },
+            ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } }),
             width: { ideal: 1280 },
             height: { ideal: 720 },
           },
@@ -122,30 +204,81 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
           if (result) handleCode(result.getText());
         },
       );
-      setRunning(true);
+    },
+    [handleCode],
+  );
 
-      const track = (videoRef.current?.srcObject as MediaStream | null)?.getVideoTracks()[0];
-      const caps = track?.getCapabilities?.() as (MediaTrackCapabilities & { torch?: boolean }) | undefined;
-      setTorch({ available: Boolean(caps?.torch), on: false });
-    } catch (e) {
-      stop();
-      const name = (e as { name?: string })?.name;
-      setError(
-        name === "NotAllowedError" || name === "SecurityError"
-          ? "Camera access was refused. Allow the camera for this site in your phone's settings, or type the ISBN below."
-          : name === "NotFoundError" || name === "OverconstrainedError"
-            ? "No camera found. Type the ISBN below instead."
-            : name === "NotSupportedError"
-              ? "This browser can't use the camera here. Type the ISBN below instead."
-              : "The camera couldn't start. Try again, or type the ISBN below.",
-      );
-    } finally {
-      setStarting(false);
+  /** Once a camera is running: autofocus, and what the light, zoom and lens buttons can offer. */
+  const tune = useCallback(async () => {
+    const track = currentTrack();
+    const caps = track?.getCapabilities?.() as Caps | undefined;
+    if (track && caps?.focusMode?.includes("continuous")) {
+      await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
     }
-  }, [handleCode, stop]);
+    setTorch({ available: Boolean(caps?.torch), on: false });
+    const steps = zoomSteps(caps?.zoom ?? null);
+    const settings = track?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined;
+    setZoom({ steps, value: settings?.zoom ?? 1 });
+    setLenses({ list: backCameras(await videoInputs()), current: settings?.deviceId ?? null });
+  }, []);
+
+  const start = useCallback(
+    async (lens?: string) => {
+      setError(null);
+      setNotice(null);
+      setStarting(true);
+      // Created inside the tap so iOS allows it to make sound later.
+      try {
+        audioRef.current ??= new AudioContext();
+      } catch {
+        audioRef.current = null;
+      }
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw Object.assign(new Error("no mediaDevices"), { name: "NotSupportedError" });
+        }
+        // The lens asked for, else the one chosen last time, else the main back lens if
+        // the labels say which (they only do once the camera has been allowed).
+        const devices = await videoInputs();
+        const known = (id: string | null) => (id && devices.some((d) => d.deviceId === id) ? id : null);
+        const wanted = known(lens ?? null) ?? known(storedCamera()) ?? pickMainCamera(devices);
+        try {
+          await open(wanted);
+        } catch (e) {
+          if (!wanted) throw e;
+          storeCamera(null); // that lens is gone or busy: fall back to "the back camera"
+          await open(null);
+        }
+        if (!wanted) {
+          // First time: now the labels are known, switch to the main lens if this isn't it.
+          const main = pickMainCamera(await videoInputs());
+          if (main && main !== currentTrack()?.getSettings().deviceId) {
+            await open(main).catch(() => open(null));
+          }
+        }
+        setRunning(true);
+        await tune();
+      } catch (e) {
+        stop();
+        const name = (e as { name?: string })?.name;
+        setError(
+          name === "NotAllowedError" || name === "SecurityError"
+            ? "Camera access was refused. Allow the camera for this site in your phone's settings, or type the ISBN below."
+            : name === "NotFoundError" || name === "OverconstrainedError"
+              ? "No camera found. Type the ISBN below instead."
+              : name === "NotSupportedError"
+                ? "This browser can't use the camera here. Type the ISBN below instead."
+                : "The camera couldn't start. Try again, or type the ISBN below.",
+        );
+      } finally {
+        setStarting(false);
+      }
+    },
+    [open, stop, tune],
+  );
 
   const toggleTorch = useCallback(async () => {
-    const track = (videoRef.current?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+    const track = currentTrack();
     if (!track) return;
     const on = !torch.on;
     try {
@@ -155,6 +288,54 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
       setTorch({ available: false, on: false });
     }
   }, [torch.on]);
+
+  const nextZoom = useCallback(async () => {
+    const track = currentTrack();
+    if (!track || zoom.steps.length === 0) return;
+    const i = zoom.steps.indexOf(zoom.value);
+    const value = zoom.steps[(i + 1) % zoom.steps.length];
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: value } as MediaTrackConstraintSet] });
+      setZoom((z) => ({ ...z, value }));
+    } catch {
+      setZoom({ steps: [], value: 1 });
+    }
+  }, [zoom]);
+
+  /** Tries the next back lens, and remembers it on this phone. */
+  const nextLens = useCallback(async () => {
+    const { list, current } = lenses;
+    if (list.length < 2) return;
+    const i = list.findIndex((d) => d.deviceId === current);
+    const next = list[(i + 1) % list.length].deviceId;
+    storeCamera(next);
+    await start(next);
+  }, [lenses, start]);
+
+  /** "Take a photo of the barcode": the phone's own camera app, then read it from the photo. */
+  const onPhoto = useCallback(
+    async (file: File | undefined) => {
+      if (!file) return;
+      setReading(true);
+      setNotice(null);
+      setError(null);
+      try {
+        const code = await decodePhoto(file);
+        if (!code) {
+          setNotice("Couldn't find a barcode in that photo. Try again with the barcode filling more of the picture, or type the ISBN.");
+          return;
+        }
+        lastRef.current = null; // a photo always counts, even of the book just scanned
+        handleCode(code);
+      } catch {
+        setNotice("Couldn't read that photo. Try again, or type the ISBN.");
+      } finally {
+        setReading(false);
+        if (photoRef.current) photoRef.current.value = "";
+      }
+    },
+    [handleCode],
+  );
 
   // Release the camera when the app goes to the background or the screen
   // is left; pick up again when it comes back.
@@ -206,6 +387,9 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     });
   }, [start, stop]);
 
+  const lensIndex = lenses.list.findIndex((d) => d.deviceId === lenses.current);
+  const pill = "flex h-10 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm text-white";
+
   return (
     <section aria-label="Camera scanner" className="flex flex-col gap-3">
       <div
@@ -223,25 +407,31 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         />
         {/* Aim guide: book barcodes are wide and short. */}
         <div aria-hidden className="pointer-events-none absolute inset-x-[12%] top-1/2 h-[28%] -translate-y-1/2 rounded-lg border-2 border-white/80" />
-        <div className="absolute inset-x-0 bottom-0 flex justify-between gap-2 p-2">
-          {torch.available ? (
-            <button
-              type="button"
-              onClick={toggleTorch}
-              aria-pressed={torch.on}
-              className="flex h-10 items-center gap-1.5 rounded-full bg-black/60 px-3 text-sm text-white"
-            >
-              <FlashlightIcon className="size-4" />
-              {torch.on ? "Light off" : "Light"}
-            </button>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            onClick={stop}
-            className="h-10 rounded-full bg-black/60 px-4 text-sm text-white"
-          >
+        <div className="absolute inset-x-0 bottom-0 flex flex-wrap justify-between gap-2 p-2">
+          <span className="flex gap-2">
+            {torch.available && (
+              <button type="button" onClick={toggleTorch} aria-pressed={torch.on} className={pill}>
+                <FlashlightIcon className="size-4" />
+                {torch.on ? "Light off" : "Light"}
+              </button>
+            )}
+            {zoom.steps.length > 0 && (
+              <button type="button" onClick={nextZoom} aria-label={`Zoom ${zoom.value}×`} className={pill}>
+                {zoom.value}×
+              </button>
+            )}
+            {lenses.list.length > 1 && (
+              <button
+                type="button"
+                onClick={nextLens}
+                aria-label={`Switch lens (lens ${lensIndex + 1} of ${lenses.list.length})`}
+                className={pill}
+              >
+                Lens {lensIndex + 1}/{lenses.list.length}
+              </button>
+            )}
+          </span>
+          <button type="button" onClick={stop} className="h-10 rounded-full bg-black/60 px-4 text-sm text-white">
             Stop camera
           </button>
         </div>
@@ -250,7 +440,7 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
       {!running && (
         <button
           type="button"
-          onClick={start}
+          onClick={() => void start()}
           disabled={disabled || starting}
           className="flex h-14 items-center justify-center gap-2 rounded-xl bg-accent text-lg font-medium text-accent-contrast disabled:opacity-40"
         >
@@ -263,8 +453,33 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         <p className="text-center text-sm text-muted">
           Point at the barcode on the back. To log another copy of the same book, move it away
           and back.
+          {zoom.steps.length > 0 && " Blurry? Hold the book further away and zoom in."}
         </p>
       )}
+
+      <input
+        ref={photoRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        aria-label="Barcode photo"
+        tabIndex={-1}
+        onChange={(e) => void onPhoto(e.target.files?.[0])}
+      />
+      <button
+        type="button"
+        disabled={disabled || reading}
+        onClick={() => {
+          // The phone's camera app can't open while this page holds the camera.
+          if (readerRef.current) stop();
+          photoRef.current?.click();
+        }}
+        className="h-11 rounded-xl border border-line bg-surface text-sm font-medium disabled:opacity-40"
+      >
+        {reading ? "Reading the photo…" : "Camera struggling? Take a photo of the barcode"}
+      </button>
+
       {notice && (
         <p role="status" className="rounded-lg border border-warn-line bg-warn-bg p-2 text-center text-sm text-warn-text">
           {notice}

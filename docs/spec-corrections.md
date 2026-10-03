@@ -353,3 +353,24 @@ robots.txt allows `/hakukone`; the terms (Sopimusehdot) say nothing about
 linking, and there's no public API. So it's a plain same-tab link, nothing
 fetched, copied or proxied. In the installed app, an outside link opens over
 the app (iPhone: Done; Android: ✕) and returns to the same screen.
+
+## 18. Scanning on weaker phone cameras.
+
+**Adds to:** spec §6. Prompted by a Samsung Galaxy A26 that wouldn't read
+barcodes: three back lenses (50 MP main, 8 MP ultra-wide, 2 MP fixed-focus
+macro), and the browser doesn't always hand over the main one.
+
+- **Main lens chosen on purpose** from the camera labels (Samsung
+  "camera2 0, facing back", iPhone "Back Camera"; ultra-wide, macro and
+  telephoto last) — `lib/camera-choice.ts`, unit tested. A **Lens 1/3**
+  button cycles the back lenses; the choice is remembered on the phone.
+- **Continuous autofocus** requested where the camera supports it.
+- **Zoom** (1×/2×/3×, where supported): hold the book further away, where a
+  cheap camera can focus, and zoom in.
+- **"Camera struggling? Take a photo of the barcode"**: the phone's own
+  camera app takes the picture (it focuses better than a browser), and the
+  barcode is read from the photo at several sizes and both orientations.
+- ZXing's **try-harder** mode is used for photos only: in @zxing/library
+  0.21 it silently stops the live decoder.
+
+On every scanning screen (Scan, Review, Evaluate).

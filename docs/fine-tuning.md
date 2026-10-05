@@ -9,12 +9,12 @@ move an item to `spec-corrections.md` once it's done.
 - **1. Covered barcodes**, **2. pocket books** and **3. remembered camera
   settings** — built in V13; see `spec-corrections.md` §19. Still open from
   them:
-  - **Pocket books need a real test.** The fix (a sharper camera picture) is a
-    best guess. If they still don't scan, the other suspects were: getting
-    close hits the camera's closest-focus limit (zoom is the workaround);
-    the aiming box is sized for full-size barcodes; glossy or curved backs.
-    Needed: a photo of a problem barcode, which phone, and whether zoom, the
-    lens button or "Take a photo" helped.
+  - **Pocket books: likely causes were low light and low picture quality.**
+    The light and zoom are what helped in real use. Now the picture is
+    sharper (more detail left after zooming in), and the light and zoom stay
+    on once chosen. If some still won't scan, the remaining suspects are
+    glossy or curved backs, or the aiming box being sized for full-size
+    barcodes.
   - **Maybe later: recognise the cover with AI** (title and author off the
     cover, to fill in the search; the person picks the edition). Needs
     signal and an API key, and costs a little per photo.

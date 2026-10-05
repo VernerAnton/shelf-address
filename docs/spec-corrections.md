@@ -374,3 +374,33 @@ macro), and the browser doesn't always hand over the main one.
   0.21 it silently stops the live decoder.
 
 On every scanning screen (Scan, Review, Evaluate).
+
+## 19. Covered barcodes, pocket books, remembered camera settings.
+
+**Adds to:** spec §6 and §17 (`docs/fine-tuning.md` items 1–3).
+
+- **Covered barcodes.** Recycling shops often stick their price over the
+  barcode. "Camera struggling? Take a photo" now also accepts a photo of the
+  **copyright page** (the back of the title page): if the photo has no
+  barcode, the printed ISBN is read from it with Tesseract, on the phone
+  (`lib/client/ocr.ts`). Every candidate must pass the ISBN check digit, so a
+  misread number is dropped rather than giving the wrong book; common
+  look-alikes (O for 0, l for 1…) are corrected inside number runs
+  (`lib/isbn-text.ts`, unit tested). Tried upright, then on its sides. A page
+  listing several ISBNs (hardback, paperback, e-book) shows them with the
+  rest of their line ("(sid.)", "(nid.)") and asks which is the book in hand.
+  The files (about 7 MB: engine, worker, English data, which reads digits and
+  Finnish imprint lines well enough) are served from `/vendor/tesseract-<v>/`,
+  downloaded in the background once a scanning screen has been open a few
+  seconds, and kept by the service worker, so it works without signal after
+  that. On Data Saver they download on first use instead.
+- **Search by title** on Evaluate: whatever is typed goes to Antikvaari's
+  search (`hakukone?q=`). Coming back restarts scanning as after a scan.
+- **Pocket books:** the camera asks for 1920×1080 instead of 1280×720, for
+  more pixels per bar on small barcodes. A best guess, pending a test on a
+  real problem book.
+- **Zoom and light are remembered** on the phone, like the lens, and come
+  back whenever the camera starts — including returning from Antikvaari,
+  where the camera has to be released while away.
+
+On every scanning screen (Scan, Review, Evaluate).

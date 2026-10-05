@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraIcon, FlashlightIcon } from "@/components/icons";
 import { backCameras, pickMainCamera, zoomSteps, type CameraDevice } from "@/lib/camera-choice";
-import { parseIsbn } from "@/lib/isbn";
+import { formatIsbn, parseIsbn } from "@/lib/isbn";
+import type { FoundIsbn } from "@/lib/isbn-text";
 import { onCameraClaims } from "@/lib/client/camera";
+import { readIsbnsFromPhoto, warmOcr } from "@/lib/client/ocr";
 
 type Props = {
   disabled: boolean;
@@ -27,11 +29,19 @@ type Props = {
  * - a zoom button, so a book can be held far enough away to focus;
  * - photos are decoded with the library's "try harder" mode (it can't be
  *   used live: in @zxing/library 0.21 it silently stops the live decoder);
- * - "Take a photo of the barcode" uses the phone's own camera app, which
- *   focuses better than a browser, and reads the barcode from the photo.
+ * - "Take a photo" uses the phone's own camera app, which focuses better
+ *   than a browser, and reads the barcode from the photo;
+ * - zoom and the light are remembered on the phone and come back whenever
+ *   the camera starts again (e.g. back from Antikvaari), like the lens.
+ *
+ * Covered barcodes (§19): if a photo has no barcode, the printed ISBN is read
+ * from it instead — a photo of the copyright page. A page listing several
+ * ISBNs (hardback, paperback…) asks which one.
  */
 const GONE_AFTER_MS = 1500;
 const CAMERA_KEY = "scanner:camera";
+const ZOOM_KEY = "scanner:zoom";
+const TORCH_KEY = "scanner:torch";
 
 type Reader = import("@zxing/library").BrowserMultiFormatReader;
 type Caps = MediaTrackCapabilities & { torch?: boolean; zoom?: { min: number; max: number }; focusMode?: string[] };
@@ -47,20 +57,20 @@ function beep(audio: AudioContext | null) {
   osc.stop(audio.currentTime + 0.07);
 }
 
-function storedCamera(): string | null {
+function stored(key: string): string | null {
   try {
-    return localStorage.getItem(CAMERA_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function storeCamera(id: string | null) {
+function store(key: string, value: string | null) {
   try {
-    if (id) localStorage.setItem(CAMERA_KEY, id);
-    else localStorage.removeItem(CAMERA_KEY);
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
   } catch {
-    // Private mode etc.: the choice just isn't remembered.
+    // Private mode etc.: the setting just isn't remembered.
   }
 }
 
@@ -145,11 +155,15 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   const [torch, setTorch] = useState<{ available: boolean; on: boolean }>({ available: false, on: false });
   const [lenses, setLenses] = useState<{ list: CameraDevice[]; current: string | null }>({ list: [], current: null });
   const [zoom, setZoom] = useState<{ steps: number[]; value: number }>({ steps: [], value: 1 });
+  const [choices, setChoices] = useState<FoundIsbn[] | null>(null);
 
   // Load the decoder in the background as soon as the screen opens, so the
-  // service worker has it cached before the phone goes out of signal.
+  // service worker has it cached before the phone goes out of signal; the
+  // text reader for covered barcodes a little later, once.
   useEffect(() => {
     void import("@zxing/library");
+    const timer = setTimeout(warmOcr, 5000);
+    return () => clearTimeout(timer);
   }, []);
 
   const stop = useCallback(() => {
@@ -195,8 +209,9 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
           audio: false,
           video: {
             ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: "environment" } }),
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
+            // Full HD: small barcodes (pocket books) need the pixels.
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
           },
         },
         videoRef.current!,
@@ -208,17 +223,33 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     [handleCode],
   );
 
-  /** Once a camera is running: autofocus, and what the light, zoom and lens buttons can offer. */
+  /**
+   * Once a camera is running: autofocus, what the light, zoom and lens buttons
+   * can offer, and the zoom and light as they were last left.
+   */
   const tune = useCallback(async () => {
     const track = currentTrack();
     const caps = track?.getCapabilities?.() as Caps | undefined;
     if (track && caps?.focusMode?.includes("continuous")) {
       await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
     }
-    setTorch({ available: Boolean(caps?.torch), on: false });
+    let lit = false;
+    if (track && caps?.torch && stored(TORCH_KEY) === "on") {
+      lit = await track
+        .applyConstraints({ advanced: [{ torch: true } as MediaTrackConstraintSet] })
+        .then(() => true, () => false);
+    }
+    setTorch({ available: Boolean(caps?.torch), on: lit });
     const steps = zoomSteps(caps?.zoom ?? null);
     const settings = track?.getSettings() as (MediaTrackSettings & { zoom?: number }) | undefined;
-    setZoom({ steps, value: settings?.zoom ?? 1 });
+    let value = settings?.zoom ?? 1;
+    const wanted = Number(stored(ZOOM_KEY));
+    if (track && steps.includes(wanted) && wanted !== value) {
+      value = await track
+        .applyConstraints({ advanced: [{ zoom: wanted } as MediaTrackConstraintSet] })
+        .then(() => wanted, () => value);
+    }
+    setZoom({ steps, value });
     setLenses({ list: backCameras(await videoInputs()), current: settings?.deviceId ?? null });
   }, []);
 
@@ -241,12 +272,12 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         // the labels say which (they only do once the camera has been allowed).
         const devices = await videoInputs();
         const known = (id: string | null) => (id && devices.some((d) => d.deviceId === id) ? id : null);
-        const wanted = known(lens ?? null) ?? known(storedCamera()) ?? pickMainCamera(devices);
+        const wanted = known(lens ?? null) ?? known(stored(CAMERA_KEY)) ?? pickMainCamera(devices);
         try {
           await open(wanted);
         } catch (e) {
           if (!wanted) throw e;
-          storeCamera(null); // that lens is gone or busy: fall back to "the back camera"
+          store(CAMERA_KEY, null); // that lens is gone or busy: fall back to "the back camera"
           await open(null);
         }
         if (!wanted) {
@@ -284,6 +315,7 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     try {
       await track.applyConstraints({ advanced: [{ torch: on } as MediaTrackConstraintSet] });
       setTorch({ available: true, on });
+      store(TORCH_KEY, on ? "on" : null);
     } catch {
       setTorch({ available: false, on: false });
     }
@@ -297,6 +329,7 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     try {
       await track.applyConstraints({ advanced: [{ zoom: value } as MediaTrackConstraintSet] });
       setZoom((z) => ({ ...z, value }));
+      store(ZOOM_KEY, value === 1 ? null : String(value));
     } catch {
       setZoom({ steps: [], value: 1 });
     }
@@ -308,27 +341,44 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     if (list.length < 2) return;
     const i = list.findIndex((d) => d.deviceId === current);
     const next = list[(i + 1) % list.length].deviceId;
-    storeCamera(next);
+    store(CAMERA_KEY, next);
     await start(next);
   }, [lenses, start]);
 
-  /** "Take a photo of the barcode": the phone's own camera app, then read it from the photo. */
+  /**
+   * "Take a photo": the phone's own camera app, then the barcode read from
+   * the photo — or, if there's none (covered by a sticker), the ISBN printed
+   * on the page.
+   */
   const onPhoto = useCallback(
     async (file: File | undefined) => {
       if (!file) return;
       setReading(true);
       setNotice(null);
       setError(null);
+      setChoices(null);
       try {
-        const code = await decodePhoto(file);
-        if (!code) {
-          setNotice("Couldn't find a barcode in that photo. Try again with the barcode filling more of the picture, or type the ISBN.");
+        lastRef.current = null; // a photo always counts, even of the book just scanned
+        const code = await decodePhoto(file).catch(() => null);
+        if (code) return handleCode(code);
+        let found: FoundIsbn[];
+        try {
+          found = await readIsbnsFromPhoto(file);
+        } catch {
+          setNotice(
+            navigator.onLine
+              ? "Couldn't read that photo. Try again, or type the ISBN."
+              : "No barcode in that photo. Reading a printed ISBN needs signal the first time (a one-time download). Type the ISBN for now.",
+          );
           return;
         }
-        lastRef.current = null; // a photo always counts, even of the book just scanned
-        handleCode(code);
-      } catch {
-        setNotice("Couldn't read that photo. Try again, or type the ISBN.");
+        if (found.length === 1) handleCode(found[0].isbn13);
+        else if (found.length > 1) setChoices(found);
+        else {
+          setNotice(
+            "Couldn't find a barcode or an ISBN in that photo. Try again closer, with the ISBN line sharp and well lit, or type the ISBN.",
+          );
+        }
       } finally {
         setReading(false);
         if (photoRef.current) photoRef.current.value = "";
@@ -477,8 +527,37 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         }}
         className="h-11 rounded-xl border border-line bg-surface text-sm font-medium disabled:opacity-40"
       >
-        {reading ? "Reading the photo…" : "Camera struggling? Take a photo of the barcode"}
+        {reading ? "Reading the photo…" : "Camera struggling? Take a photo"}
       </button>
+      {!reading && !choices && (
+        <p className="-mt-1 text-center text-xs text-muted">
+          Of the barcode — or if it&apos;s covered, of the page with the ISBN (usually the back of the title page).
+        </p>
+      )}
+
+      {choices && (
+        <section aria-label="ISBNs in the photo" className="flex flex-col gap-2 rounded-xl border-2 border-accent bg-surface p-3">
+          <p className="text-sm font-medium">This page lists {choices.length} ISBNs. Which is the book in your hand?</p>
+          {choices.map((c) => (
+            <button
+              key={c.isbn13}
+              type="button"
+              onClick={() => {
+                setChoices(null);
+                lastRef.current = null;
+                handleCode(c.isbn13);
+              }}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-left active:bg-line/50"
+            >
+              <span className="font-mono font-medium">{formatIsbn(c.isbn13)}</span>
+              {c.label && <span className="min-w-0 truncate text-sm text-muted">{c.label}</span>}
+            </button>
+          ))}
+          <button type="button" onClick={() => setChoices(null)} className="h-10 text-sm text-muted">
+            None of these
+          </button>
+        </section>
+      )}
 
       {notice && (
         <p role="status" className="rounded-lg border border-warn-line bg-warn-bg p-2 text-center text-sm text-warn-text">

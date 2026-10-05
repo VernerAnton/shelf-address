@@ -7,7 +7,7 @@
  * always be saved.
  */
 
-import { OPENCV_URL } from "./opencv-file";
+import { OPENCV_URL } from "./vendor-files";
 
 export type Corners = [number, number][];
 export type Pixels = { width: number; height: number; data: Uint8ClampedArray };

@@ -5,8 +5,9 @@
  * Only a plain link: Antikvaari forbids showing its pages inside another site
  * (X-Frame-Options: SAMEORIGIN), so nothing is embedded, fetched or copied.
  * The search address is the one the site itself publishes (its schema.org
- * SearchAction); it accepts an ISBN-13, with or without hyphens, or an ISBN-10.
+ * SearchAction); it accepts an ISBN-13, with or without hyphens, an ISBN-10,
+ * or words (a title, an author) for books whose barcode is covered.
  */
-export function antikvaariSearchUrl(isbn13: string): string {
-  return `https://www.antikvaari.fi/hakukone?q=${encodeURIComponent(isbn13)}`;
+export function antikvaariSearchUrl(query: string): string {
+  return `https://www.antikvaari.fi/hakukone?q=${encodeURIComponent(query.trim())}`;
 }

@@ -48,6 +48,9 @@ async function titlesFor(keys: string[]): Promise<Record<string, string>> {
  * come back, and rescanning it would bounce straight back to Antikvaari. So
  * the first read of that same book after returning is ignored; move it away
  * and back to look it up again.
+ *
+ * "Search by title" (§19) is for books whose barcode is covered: whatever is
+ * typed goes to Antikvaari's search as it is.
  */
 export function EvaluateScreen() {
   const [loaded, setLoaded] = useState(false);
@@ -55,6 +58,7 @@ export function EvaluateScreen() {
   const [current, setCurrent] = useState<Evaluated | null>(null);
   const [recent, setRecent] = useState<Evaluated[]>([]);
   const [note, setNote] = useState<string | null>(null);
+  const [words, setWords] = useState("");
   const skip = useRef<{ isbn13: string; until: number } | null>(null);
   const settingsRef = useRef(settings);
 
@@ -194,6 +198,38 @@ export function EvaluateScreen() {
             </p>
           )}
           <ManualEntry disabled={false} onIsbn={onIsbn} submitLabel="Look up" />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const query = words.trim();
+              if (!query) return;
+              // Not a book scan: nothing to skip on the way back, but coming back still restarts scanning.
+              void leaving("").then(() => window.location.assign(antikvaariSearchUrl(query)));
+            }}
+            className="flex flex-col gap-2"
+          >
+            <label htmlFor="title-search" className="text-sm font-medium">
+              Barcode covered? Search by title or author
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="title-search"
+                type="search"
+                enterKeyHint="search"
+                value={words}
+                onChange={(e) => setWords(e.target.value)}
+                placeholder="e.g. Tuntematon sotilas"
+                className="h-12 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 text-base outline-none focus:border-accent"
+              />
+              <button
+                type="submit"
+                disabled={!words.trim()}
+                className="h-12 shrink-0 rounded-xl bg-accent px-4 font-medium text-accent-contrast disabled:opacity-40"
+              >
+                Search
+              </button>
+            </div>
+          </form>
         </>
       )}
 

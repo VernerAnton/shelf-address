@@ -6,7 +6,9 @@
  *
  *   /_next/static/*   cache-first. Content-hashed, never change once built.
  *   /vendor/*         cache-first, own cache: OpenCV for the cover camera,
- *                     ~11 MB, versioned by name; only the current one is kept.
+ *                     Tesseract for reading printed ISBNs. Versioned by name
+ *                     ("opencv-4.12.0.js", "tesseract-7.0.0/…"); a new version
+ *                     of a library replaces only that library's old files.
  *   page navigations  network-first, fall back to the last copy seen.
  *   /api/*            never cached — the page's upload queue handles failure.
  *   other files       stale-while-revalidate (icons, manifest).
@@ -85,14 +87,28 @@ async function cacheFirst(request) {
   return response;
 }
 
-/** A vendor file: kept for good; a new version replaces the old ones. */
+/** "opencv-4.12.0.js" or "tesseract-7.0.0": the versioned first part of a /vendor/ path. */
+function vendorRelease(url) {
+  return new URL(url).pathname.split("/")[2] || "";
+}
+
+/** The library a release belongs to: "opencv", "tesseract". */
+function vendorLibrary(release) {
+  return release.replace(/-[\d.]+(\.js)?$/, "");
+}
+
+/** A vendor file: kept for good; a new version of a library replaces its old files. */
 async function vendorFile(request) {
   const cache = await caches.open(VENDOR);
   const cached = await cache.match(request);
   if (cached) return cached;
   const response = await fetch(request);
   if (cacheable(response)) {
-    for (const key of await cache.keys()) await cache.delete(key);
+    const release = vendorRelease(request.url);
+    for (const key of await cache.keys()) {
+      const other = vendorRelease(key.url);
+      if (other !== release && vendorLibrary(other) === vendorLibrary(release)) await cache.delete(key);
+    }
     await cache.put(request, response.clone());
   }
   return response;

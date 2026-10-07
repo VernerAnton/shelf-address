@@ -40,6 +40,21 @@ export const viewport: Viewport = {
   ],
 };
 
+/**
+ * The app opens on Evaluate (docs/spec-corrections.md §20). A phone keeps the
+ * start page it was given when the app was installed (/scan before V14) and
+ * may never refresh it (iPhone), so a launch that lands on /scan is sent on
+ * to /evaluate here, before anything shows. Only a launch: the installed app,
+ * the first page of the session, a fresh load — not a reload, not the Scan
+ * tab, not a browser tab.
+ */
+const LAUNCH_TO_EVALUATE = `(function(){try{
+var first=!sessionStorage.getItem("launched");sessionStorage.setItem("launched","1");
+var app=matchMedia("(display-mode: standalone)").matches||navigator.standalone===true;
+var nav=performance.getEntriesByType("navigation")[0];
+if(first&&app&&location.pathname==="/scan"&&!location.search&&(!nav||nav.type==="navigate"))location.replace("/evaluate");
+}catch(e){}})();`;
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
@@ -47,6 +62,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <script dangerouslySetInnerHTML={{ __html: LAUNCH_TO_EVALUATE }} />
         {/*
           Written by hand rather than via Next's `manifest` metadata so it can
           carry crossOrigin="use-credentials". Browsers fetch the manifest

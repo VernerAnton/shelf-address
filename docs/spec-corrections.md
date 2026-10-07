@@ -410,10 +410,13 @@ On every scanning screen (Scan, Review, Evaluate).
 **Changes:** spec §7 (the app opened on Scan).
 
 - **The app opens on Evaluate**: the manifest's `start_url` and `/` both go
-  to `/evaluate`. An installed app picks up the new start page when the
-  phone refreshes the app's details: Android does it by itself, usually
-  within a day of opening the app; an iPhone keeps the page it was added
-  with until the icon is removed and added to the Home Screen again.
+  to `/evaluate`. A phone keeps the start page the app was installed with
+  (`/scan` before V14) until it refreshes the app's details — Android
+  eventually, an iPhone never (only by re-adding the icon). So since V16 a
+  tiny script at the top of every page sends a **launch** that lands on
+  `/scan` on to `/evaluate`: the installed app (display-mode standalone),
+  the first page of the session (sessionStorage), a fresh load (not a
+  reload). The Scan tab, reloads and browser tabs are untouched.
 - *Tried and removed (V14 → V15):* a switch to open Antikvaari in the
   phone's browser instead of over the app. A phone opens the browser only
   on a tap, so scans couldn't open it by themselves; it wasn't worth the

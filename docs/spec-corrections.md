@@ -404,3 +404,24 @@ On every scanning screen (Scan, Review, Evaluate).
   where the camera has to be released while away.
 
 On every scanning screen (Scan, Review, Evaluate).
+
+## 20. Opens on Evaluate; Antikvaari in the browser as an option.
+
+**Changes:** spec §7 (the app opened on Scan) and §17.
+
+- **The app opens on Evaluate**: the manifest's `start_url` and `/` both go
+  to `/evaluate`. An installed app picks up the new start page when the
+  phone refreshes the app's details: Android does it by itself, usually
+  within a day of opening the app; an iPhone keeps the page it was added
+  with until the icon is removed and added to the Home Screen again.
+- **"Open Antikvaari in my browser, not inside the app"**, a third switch on
+  Evaluate, off by default. On: Antikvaari opens in a tab of the phone's
+  browser (`window.open`), and the app stays where it was; switching back
+  to the app counts as coming back, as before. Links (the button, the
+  recent list) open in a new tab too.
+- A phone opens the browser only on a tap (pop-up blocking). A scan isn't a
+  tap, so with this switch on the scan usually can't open Antikvaari by
+  itself: the book is shown with "Open on Antikvaari" and a line saying to
+  tap it. Title search is a tap, so it opens directly.
+- On an iPhone, an app on the Home Screen may still open new tabs in its own
+  Safari view rather than the Safari app; unconfirmed.

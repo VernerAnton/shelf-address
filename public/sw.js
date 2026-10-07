@@ -25,7 +25,7 @@ const VENDOR = `shelf-vendor-${VERSION}`;
 const STATIC_MAX_ENTRIES = 250;
 
 // Pages worth having before the first time they're visited offline.
-const PRECACHE = ["/scan", "/manifest.webmanifest", "/icons/icon-192.png", "/icon.svg"];
+const PRECACHE = ["/evaluate", "/scan", "/manifest.webmanifest", "/icons/icon-192.png", "/icon.svg"];
 
 const OFFLINE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

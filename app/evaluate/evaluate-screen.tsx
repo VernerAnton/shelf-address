@@ -11,8 +11,8 @@ import { ManualEntry } from "@/app/scan/_components/manual-entry";
 type Evaluated = { isbn13: string; at: string; title?: string | null };
 
 /** Per phone: the fastest flow is the default; either step can be switched off. */
-type Settings = { autoOpen: boolean; autoResume: boolean; inBrowser: boolean };
-const DEFAULTS: Settings = { autoOpen: true, autoResume: true, inBrowser: false };
+type Settings = { autoOpen: boolean; autoResume: boolean };
+const DEFAULTS: Settings = { autoOpen: true, autoResume: true };
 
 const RECENT_MAX = 20;
 /** Coming back within this long counts as returning from that book's search. */
@@ -34,22 +34,6 @@ async function titlesFor(keys: string[]): Promise<Record<string, string>> {
 }
 
 /**
- * Opens Antikvaari over the app, or in a tab of the phone's own browser.
- * False if the phone wouldn't open the browser: it only allows that on a tap.
- */
-function openAntikvaari(url: string, inBrowser: boolean): boolean {
-  if (!inBrowser) {
-    window.location.assign(url);
-    return true;
-  }
-  // Not "noopener" in the features: with it, window.open reports null even when it worked.
-  const tab = window.open(url, "_blank");
-  if (!tab) return false;
-  tab.opener = null;
-  return true;
-}
-
-/**
  * Evaluate (docs/spec-corrections.md §17): scan a book, then see what it sells
  * for on Antikvaari.fi. Nothing is logged.
  *
@@ -67,12 +51,6 @@ function openAntikvaari(url: string, inBrowser: boolean): boolean {
  *
  * "Search by title" (§19) is for books whose barcode is covered: whatever is
  * typed goes to Antikvaari's search as it is.
- *
- * A third switch, off by default (§20), opens Antikvaari in the phone's own
- * browser instead of over the app. A phone opens the browser only on a tap,
- * so with it on, a scan usually shows the book and its button rather than
- * opening by itself; coming back is noticed the same way (the app becomes
- * visible again).
  */
 export function EvaluateScreen() {
   const [loaded, setLoaded] = useState(false);
@@ -156,16 +134,8 @@ export function EvaluateScreen() {
         return;
       }
       await leaving(isbn13);
-      if (settingsRef.current.inBrowser) {
-        // Straight away: the phone may still count the scan as part of the last tap.
-        if (!openAntikvaari(antikvaariSearchUrl(isbn13), true)) {
-          await kvSet("evaluate:away", null);
-          setNote("Tap Open on Antikvaari — the phone only lets the app open your browser on a tap.");
-        }
-        return;
-      }
       // A moment for the beep and the card, then over to Antikvaari.
-      setTimeout(() => openAntikvaari(antikvaariSearchUrl(isbn13), false), 250);
+      setTimeout(() => window.location.assign(antikvaariSearchUrl(isbn13)), 250);
     });
   }, []);
 
@@ -185,9 +155,6 @@ export function EvaluateScreen() {
 
   if (!loaded) return <p className="text-muted">Loading…</p>;
 
-  /** Links to Antikvaari open in a browser tab when that's switched on. */
-  const newTab = settings.inBrowser ? { target: "_blank", rel: "noopener" } : {};
-
   return (
     <>
       {current ? (
@@ -201,11 +168,7 @@ export function EvaluateScreen() {
           </div>
           <a
             href={antikvaariSearchUrl(current.isbn13)}
-            {...newTab}
-            onClick={() => {
-              setNote(null);
-              void leaving(current.isbn13);
-            }}
+            onClick={() => void leaving(current.isbn13)}
             className="flex h-14 items-center justify-center rounded-xl bg-accent text-lg font-medium text-accent-contrast"
           >
             Open on Antikvaari
@@ -223,11 +186,7 @@ export function EvaluateScreen() {
             <ScanIcon className="size-5" />
             Scan next
           </button>
-          <p className="text-sm text-muted">
-            {settings.inBrowser
-              ? "Antikvaari opens in your browser. Switch back to this app when you're done."
-              : "Antikvaari opens over the app. Tap Done (iPhone) or ✕ (Android) to come back here."}
-          </p>
+          <p className="text-sm text-muted">Antikvaari opens over the app. Tap Done (iPhone) or ✕ (Android) to come back here.</p>
         </section>
       ) : (
         <>
@@ -245,10 +204,7 @@ export function EvaluateScreen() {
               const query = words.trim();
               if (!query) return;
               // Not a book scan: nothing to skip on the way back, but coming back still restarts scanning.
-              // The tab is opened inside the tap (before any waiting), or the phone would block it.
-              const url = antikvaariSearchUrl(query);
-              void leaving("");
-              if (!openAntikvaari(url, settings.inBrowser)) window.location.assign(url);
+              void leaving("").then(() => window.location.assign(antikvaariSearchUrl(query)));
             }}
             className="flex flex-col gap-2"
           >
@@ -282,7 +238,6 @@ export function EvaluateScreen() {
           [
             ["autoOpen", "Open Antikvaari straight after a scan"],
             ["autoResume", "Start scanning again when I come back"],
-            ["inBrowser", "Open Antikvaari in my browser, not inside the app"],
           ] as const
         ).map(([key, label]) => (
           <label key={key} className="flex min-h-12 items-center justify-between gap-3 border-b border-line px-4 py-2 last:border-0">
@@ -307,7 +262,6 @@ export function EvaluateScreen() {
               <li key={e.isbn13} className="border-b border-line last:border-0">
                 <a
                   href={antikvaariSearchUrl(e.isbn13)}
-                  {...newTab}
                   onClick={() => void leaving(e.isbn13)}
                   className="flex min-h-12 items-center gap-3 px-4 py-2 active:bg-line/50"
                 >

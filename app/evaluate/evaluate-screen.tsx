@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ScanIcon } from "@/components/icons";
 import { antikvaariSearchUrl } from "@/lib/antikvaari";
@@ -253,6 +254,9 @@ export function EvaluateScreen() {
         ))}
         <p className="px-4 py-3 text-xs text-muted">Saved on this phone only.</p>
       </section>
+      <Link href="/photo-log" className="-mt-2 self-start px-1 text-sm font-medium text-accent">
+        Photo log (troubleshooting) ›
+      </Link>
 
       {recent.length > 0 && (
         <section aria-label="Recently evaluated" className="flex flex-col gap-2">

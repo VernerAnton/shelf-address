@@ -7,6 +7,7 @@ import { formatIsbn, parseIsbn } from "@/lib/isbn";
 import type { FoundIsbn } from "@/lib/isbn-text";
 import { onCameraClaims } from "@/lib/client/camera";
 import { readIsbnsFromPhoto, warmOcr } from "@/lib/client/ocr";
+import { flushPhotoLog, logPhoto, type NewEntry } from "@/lib/client/photo-log";
 
 type Props = {
   disabled: boolean;
@@ -37,11 +38,20 @@ type Props = {
  * Covered barcodes (§19): if a photo has no barcode, the printed ISBN is read
  * from it instead — a photo of the copyright page. A page listing several
  * ISBNs (hardback, paperback…) asks which one.
+ *
+ * Photo log (§21): every such photo is kept with what the app made of it, so
+ * failures on real phones can be looked at (lib/client/photo-log.ts).
  */
 const GONE_AFTER_MS = 1500;
 const CAMERA_KEY = "scanner:camera";
 const ZOOM_KEY = "scanner:zoom";
 const TORCH_KEY = "scanner:torch";
+/** Set while the phone's camera app is open for a photo (see `lostPhoto`). */
+const AWAITING_KEY = "scanner:awaiting-photo";
+/** The lost-photo check runs on the first scanner of a page load only (a reopened app). */
+let lostChecked = false;
+/** A lost photo found, not yet shown (the screen may mount the scanner more than once). */
+let lostToShow = false;
 
 type Reader = import("@zxing/library").BrowserMultiFormatReader;
 type Caps = MediaTrackCapabilities & { torch?: boolean; zoom?: { min: number; max: number }; focusMode?: string[] };
@@ -102,8 +112,7 @@ async function makeReader(thorough = false): Promise<Reader> {
  * A26), so it's tried at a few sizes, and turned sideways in case the
  * book was photographed on its side.
  */
-async function decodePhoto(file: File): Promise<string | null> {
-  const bitmap = await createImageBitmap(file);
+async function decodePhoto(bitmap: ImageBitmap): Promise<string | null> {
   const reader = await makeReader(true);
   try {
     for (const side of [1600, 2400, 1000]) {
@@ -114,14 +123,17 @@ async function decodePhoto(file: File): Promise<string | null> {
         const canvas = document.createElement("canvas");
         canvas.width = turn ? h : w;
         canvas.height = turn ? w : h;
-        const context = canvas.getContext("2d")!;
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("No canvas: the phone may be short of memory");
         if (turn) {
           context.translate(h, 0);
           context.rotate(Math.PI / 2);
         }
         context.drawImage(bitmap, 0, 0, w, h);
+        const url = canvas.toDataURL("image/jpeg", 0.92);
+        canvas.width = canvas.height = 0; // the memory back straight away
         try {
-          const result = await reader.decodeFromImageUrl(canvas.toDataURL("image/jpeg", 0.92));
+          const result = await reader.decodeFromImageUrl(url);
           return result.getText();
         } catch {
           // Not found at this size and angle: try the next.
@@ -130,10 +142,23 @@ async function decodePhoto(file: File): Promise<string | null> {
     }
     return null;
   } finally {
-    bitmap.close();
     reader.reset();
   }
 }
+
+/** A small copy for the photo log's list. */
+async function thumbnail(bitmap: ImageBitmap): Promise<Blob | null> {
+  const scale = Math.min(1, 480 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.75));
+  canvas.width = canvas.height = 0;
+  return blob;
+}
+
+const message = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
 export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -156,14 +181,63 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   const [lenses, setLenses] = useState<{ list: CameraDevice[]; current: string | null }>({ list: [], current: null });
   const [zoom, setZoom] = useState<{ steps: number[]; value: number }>({ steps: [], value: 1 });
   const [choices, setChoices] = useState<FoundIsbn[] | null>(null);
+  /** The last photo never reached the app (see the lost-photo check below). */
+  const [lost, setLost] = useState(false);
 
   // Load the decoder in the background as soon as the screen opens, so the
   // service worker has it cached before the phone goes out of signal; the
   // text reader for covered barcodes a little later, once.
   useEffect(() => {
     void import("@zxing/library");
+    void flushPhotoLog();
     const timer = setTimeout(warmOcr, 5000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // A photo that never came back: on a phone short of memory, Android may
+  // close the app while its camera app is open, and the app reopens without
+  // the photo. Noticed here when the screen loads with the marker still set.
+  useEffect(() => {
+    if (!lostChecked) {
+      lostChecked = true;
+      let since = 0;
+      try {
+        since = Number(sessionStorage.getItem(AWAITING_KEY));
+        sessionStorage.removeItem(AWAITING_KEY);
+      } catch {
+        // can't tell
+      }
+      if (since && Date.now() - since < 10 * 60 * 1000) {
+        lostToShow = true;
+        void logPhoto(
+          { takenAt: new Date(since).toISOString(), outcome: "lost", isbns: [], error: null, ocrText: null, durationMs: Date.now() - since, width: null, height: null, bytes: null, mime: null },
+          null,
+          null,
+        );
+      }
+    }
+    if (!lostToShow) return;
+    const timer = setTimeout(() => {
+      lostToShow = false;
+      setLost(true);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Back from the camera app without a photo (cancelled): no longer waiting for one.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      setTimeout(() => {
+        try {
+          sessionStorage.removeItem(AWAITING_KEY);
+        } catch {
+          // nothing to clear
+        }
+      }, 5000);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   const stop = useCallback(() => {
@@ -348,40 +422,85 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
   /**
    * "Take a photo": the phone's own camera app, then the barcode read from
    * the photo — or, if there's none (covered by a sticker), the ISBN printed
-   * on the page.
+   * on the page. Whatever happens goes in the photo log.
    */
   const onPhoto = useCallback(
     async (file: File | undefined) => {
+      try {
+        sessionStorage.removeItem(AWAITING_KEY);
+      } catch {
+        // nothing to clear
+      }
       if (!file) return;
+      setLost(false);
       setReading(true);
       setNotice(null);
       setError(null);
       setChoices(null);
+      const started = Date.now();
+      const log: NewEntry = {
+        takenAt: new Date().toISOString(),
+        outcome: "error",
+        isbns: [],
+        error: null,
+        ocrText: null,
+        durationMs: null,
+        width: null,
+        height: null,
+        bytes: file.size,
+        mime: file.type || null,
+      };
+      let thumb: Blob | null = null;
+      let then = () => {};
+      let bitmap: ImageBitmap | null = null;
       try {
         lastRef.current = null; // a photo always counts, even of the book just scanned
-        const code = await decodePhoto(file).catch(() => null);
-        if (code) return handleCode(code);
-        let found: FoundIsbn[];
-        try {
-          found = await readIsbnsFromPhoto(file);
-        } catch {
-          setNotice(
-            navigator.onLine
-              ? "Couldn't read that photo. Try again, or type the ISBN."
-              : "No barcode in that photo. Reading a printed ISBN needs signal the first time (a one-time download). Type the ISBN for now.",
-          );
+        // Decoded once, used for the barcode, the text and the log's thumbnail.
+        bitmap = await createImageBitmap(file);
+        log.width = bitmap.width;
+        log.height = bitmap.height;
+        thumb = await thumbnail(bitmap).catch(() => null);
+        const code = await decodePhoto(bitmap).catch(() => null);
+        if (code) {
+          log.outcome = "barcode";
+          log.isbns = [code];
+          then = () => handleCode(code);
           return;
         }
-        if (found.length === 1) handleCode(found[0].isbn13);
-        else if (found.length > 1) setChoices(found);
-        else {
-          setNotice(
-            "Couldn't find a barcode or an ISBN in that photo. Try again closer, with the ISBN line sharp and well lit, or type the ISBN.",
-          );
+        const { found, text } = await readIsbnsFromPhoto(bitmap);
+        log.ocrText = text;
+        log.isbns = found.map((f) => f.isbn13);
+        if (found.length === 1) {
+          log.outcome = "isbn";
+          then = () => handleCode(found[0].isbn13);
+        } else if (found.length > 1) {
+          log.outcome = "several";
+          then = () => setChoices(found);
+        } else {
+          log.outcome = "none";
+          then = () =>
+            setNotice(
+              "Couldn't find a barcode or an ISBN in that photo. Try again closer, with the ISBN line sharp and well lit, or type the ISBN.",
+            );
         }
+      } catch (e) {
+        log.outcome = "error";
+        log.error = message(e);
+        const offline = !navigator.onLine;
+        then = () =>
+          setNotice(
+            offline
+              ? "No barcode in that photo. Reading a printed ISBN needs signal the first time (a one-time download). Type the ISBN for now."
+              : "Couldn't read that photo. Try again, or type the ISBN.",
+          );
       } finally {
+        bitmap?.close();
+        log.durationMs = Date.now() - started;
+        // Saved on the phone before moving on (Evaluate may leave for Antikvaari next); uploaded in the background.
+        await logPhoto(log, file, thumb).catch(() => {});
         setReading(false);
         if (photoRef.current) photoRef.current.value = "";
+        then();
       }
     },
     [handleCode],
@@ -523,6 +642,11 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         onClick={() => {
           // The phone's camera app can't open while this page holds the camera.
           if (readerRef.current) stop();
+          try {
+            sessionStorage.setItem(AWAITING_KEY, String(Date.now()));
+          } catch {
+            // can't tell a lost photo then; no harm
+          }
           photoRef.current?.click();
         }}
         className="h-11 rounded-xl border border-line bg-surface text-sm font-medium disabled:opacity-40"
@@ -559,6 +683,12 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
         </section>
       )}
 
+      {lost && (
+        <p role="status" className="rounded-lg border border-warn-line bg-warn-bg p-2 text-center text-sm text-warn-text">
+          The photo didn&apos;t reach the app: the phone closed the app while its camera was open. Try again — closing other
+          apps can help.
+        </p>
+      )}
       {notice && (
         <p role="status" className="rounded-lg border border-warn-line bg-warn-bg p-2 text-center text-sm text-warn-text">
           {notice}

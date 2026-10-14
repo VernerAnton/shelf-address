@@ -421,3 +421,36 @@ On every scanning screen (Scan, Review, Evaluate).
   phone's browser instead of over the app. A phone opens the browser only
   on a tap, so scans couldn't open it by themselves; it wasn't worth the
   extra tap.
+
+## 21. Photo log, and a text reader that recovers.
+
+**Adds to:** §19. Prompted by a real phone (Galaxy A26) where reading a
+printed ISBN worked a couple of times and then failed ten times in a row.
+
+- **Photo log** (`photo_log` table, migration 0008; photos in R2 under
+  `photo-log/`): every photo taken with "Camera struggling? Take a photo" is
+  kept with what the app made of it — barcode read, ISBN read, several
+  offered, nothing found, error (with its message), or *lost* — plus the
+  text the reader saw in each orientation tried, how long it took, the photo's
+  size, the screen, the phone's browser and the app version. A thumbnail is
+  made on the phone for the list.
+- Saved on the phone first, then uploaded in the background
+  (`lib/client/photo-log.ts`); without signal it waits and goes up later, at
+  most 30 entries kept waiting. Logging never holds up the photo button.
+- **Photo log page** (`/photo-log`, linked from Evaluate): the entries with
+  thumbnails, a count by outcome, the text read, the full photo, and Delete.
+  A per-phone switch turns logging off. Entries older than 30 days are
+  deleted, photos included, whenever a new one arrives. `GET /api/photo-log`
+  gives the entries as JSON for looking through them elsewhere.
+- No login is on, so anyone with the address can see the page; the photos
+  are of book pages.
+- **The text reader recovers.** It was started once and reused; if it
+  crashed (out of memory, say), every later photo failed until the app was
+  closed. Now a reading that fails or takes over 60 s throws the reader away
+  and tries the photo once more with a fresh one.
+- **Less memory per photo:** decoded once (it was twice) for the barcode, the
+  text and the thumbnail; working copies are freed straight away.
+- **Lost photos:** Android may close the app while its camera app is open,
+  and the app reopens without the photo. The app now notices (a marker set
+  when the camera opens, still there when the app reloads), says so, and logs
+  it as *lost*.

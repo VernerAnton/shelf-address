@@ -121,13 +121,6 @@ export type PhotoText = { found: FoundIsbn[]; text: string };
 
 const TURN_NAMES = { 0: "upright", 90: "turned right", 270: "turned left" } as const;
 
-/**
- * The ISBNs printed in a photo, each with the rest of its line as a label,
- * and all the text read (for the photo log). Tried upright first, then on
- * its sides. If the engine fails, it's restarted and the photo tried once
- * more; throws if it still fails (or can't start: files not downloaded yet
- * and no signal).
- */
 /** Reads one orientation; a failed engine is restarted and the read tried once more. */
 async function readTurn(bitmap: ImageBitmap, turn: 0 | 90 | 270, langs: Langs, side?: number) {
   const canvas = prepare(bitmap, turn, side);
@@ -147,6 +140,13 @@ async function readTurn(bitmap: ImageBitmap, turn: 0 | 90 | 270, langs: Langs, s
   }
 }
 
+/**
+ * The ISBNs printed in a photo, each with the rest of its line as a label,
+ * and all the text read (for the photo log). Tried upright first, then on
+ * its sides. If the engine fails, it's restarted and the photo tried once
+ * more; throws if it still fails (or can't start: files not downloaded yet
+ * and no signal).
+ */
 export async function readIsbnsFromPhoto(bitmap: ImageBitmap): Promise<PhotoText> {
   const texts: string[] = [];
   for (const turn of [0, 90, 270] as const) {

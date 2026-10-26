@@ -48,3 +48,6 @@ next-env.d.ts
 
 # Browser libraries copied from node_modules by scripts/copy-vendor.mjs
 /public/vendor/
+
+# Fake camera videos, written by e2e/videos.cjs on first use
+/e2e/.cache/

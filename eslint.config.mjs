@@ -21,6 +21,8 @@ const eslintConfig = defineConfig([
     "public/vendor/**",
     // Local wrangler state and dev bundles.
     ".wrangler/**",
+    // End-to-end test scripts: plain Node (CommonJS), run by e2e/run.sh.
+    "e2e/**",
   ]),
 ]);
 

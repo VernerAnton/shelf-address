@@ -129,6 +129,13 @@ export const MapIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** Extract: text inside a viewfinder. */
+export const TextScanIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9h8M8 12h8M8 15h5" />
+  </Icon>
+);
+
 export const TagIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9-9-9Z" />

@@ -454,3 +454,35 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   and the app reopens without the photo. The app now notices (a marker set
   when the camera opens, still there when the app reloads), says so, and logs
   it as *lost*.
+
+## 22. Extract, and the bottom rows rearranged.
+
+**Changes:** spec §7 (Scan / Sections / Catalog as the three tabs).
+
+- **Extract** (`/extract`): photograph a book's back-cover text and get it to
+  the computer — for making a new back cover for a copy that lacks one. The
+  phone's own camera app takes the photo; the text is read on the phone
+  with Tesseract, Finnish and English data (`fin+eng`, about 4 MB more,
+  downloaded once when Extract is first opened; works offline after that).
+  Read at up to 2400 px; tried on its sides when the upright read doesn't
+  look like real words (`wordLikeness`: Tesseract can be confident about
+  text read the wrong way up).
+- The text is tidied (`lib/extract-text.ts`, unit tested): lines broken by
+  the cover joined into paragraphs, hyphenated words rejoined ("kirjoit-" /
+  "taja"), real hyphens kept ("EU-maissa", "Etelä-Suomessa"), specks
+  dropped. It's shown in an editable box, kept on the phone as it's edited,
+  and a second photo adds to the end.
+- **Share** sends it as a `.txt` file named after the first words — OneDrive
+  in the share menu puts it on the computer; email and the rest work too.
+  Without a share menu (a computer's browser) the file is saved. **Copy**
+  copies it. A warning shows when the reader wasn't confident.
+- No AI yet: if real back covers come out too badly, a vision model can be
+  added as the reading step, the rest unchanged.
+- **Bottom rows**: the main row is Sections · Evaluate · Extract. While in
+  Sections (places, Scan, Catalog, book pages) a second row sits just above
+  it — Places · Scan · Catalog — where the thumb rests. The page keeps its
+  end clear of whichever rows show. The Photo log counts as Evaluate.
+- **Tests now live in the repository** (`e2e/`, run with `e2e/run.sh`). The
+  earlier suites lived in a session's scratch folder and were lost when the
+  cloud environment was reset; the launch and photo-log suites were
+  recovered, and new ones cover Extract and the bottom rows.

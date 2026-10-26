@@ -1,19 +1,24 @@
 "use client";
 
 /**
- * Reading a printed ISBN from a photo (docs/spec-corrections.md §19): for
- * books whose barcode is covered by a shop's sticker, a photo of the
- * copyright page. Tesseract runs on the phone, from files this site serves
- * (scripts/copy-vendor.mjs), so it works without signal once they're cached.
+ * Reading text from photos with Tesseract, on the phone, from files this site
+ * serves (scripts/copy-vendor.mjs), so it works without signal once cached:
+ * - a printed ISBN, for books whose barcode is covered (§19): English data;
+ * - a book's back-cover text, for Extract (§22): Finnish and English.
+ * One engine at a time: a weak phone can't spare the memory for two.
  */
 
+import { wordLikeness } from "@/lib/extract-text";
 import { findIsbns, type FoundIsbn } from "@/lib/isbn-text";
 import { TESSERACT_DIR } from "./vendor-files";
 
 type OcrWorker = import("tesseract.js").Worker;
 
 const WORKER_URL = `${TESSERACT_DIR}/worker.min.js`;
-const LANG_URL = `${TESSERACT_DIR}/lang/eng.traineddata.gz`;
+const langUrl = (lang: string) => `${TESSERACT_DIR}/lang/${lang}.traineddata.gz`;
+
+/** "eng" for ISBNs; "fin+eng" for Extract (Finnish texts quote English titles and names). */
+export type Langs = "eng" | "fin+eng";
 
 /** The engine file Tesseract will pick on this phone (the same test it makes). */
 async function coreUrl(): Promise<string> {
@@ -22,29 +27,31 @@ async function coreUrl(): Promise<string> {
   return `${TESSERACT_DIR}/tesseract-core${variant}-lstm.wasm.js`;
 }
 
-let warmed = false;
+const warmed = new Set<Langs>();
 /**
  * Downloads the files in the background (about 7 MB, once) so the service
  * worker has them before the phone is out of signal. Doesn't start the engine.
  */
-export function warmOcr() {
-  if (warmed || !navigator.onLine) return;
+export function warmOcr(langs: Langs = "eng") {
+  if (warmed.has(langs) || !navigator.onLine) return;
   const connection = (navigator as { connection?: { saveData?: boolean } }).connection;
   if (connection?.saveData) return;
-  warmed = true;
+  warmed.add(langs);
   void coreUrl()
-    .then((core) => Promise.all([WORKER_URL, LANG_URL, core].map((url) => fetch(url).then((r) => r.blob()))))
+    .then((core) => Promise.all([WORKER_URL, core, ...langs.split("+").map(langUrl)].map((url) => fetch(url).then((r) => r.blob()))))
     .catch(() => {
-      warmed = false;
+      warmed.delete(langs);
     });
 }
 
-let worker: Promise<OcrWorker> | null = null;
-/** Starts the engine (once); later calls reuse it until it fails. */
-function startOcr(): Promise<OcrWorker> {
-  worker ??= (async () => {
+let worker: { langs: Langs; ready: Promise<OcrWorker> } | null = null;
+/** Starts the engine for these languages (once); later calls reuse it until it fails or other languages are wanted. */
+async function startOcr(langs: Langs): Promise<OcrWorker> {
+  if (worker && worker.langs !== langs) await resetOcr();
+  if (worker) return worker.ready;
+  const ready = (async () => {
     const { createWorker } = await import("tesseract.js");
-    return createWorker("eng", 1, {
+    return createWorker(langs, 1, {
       workerPath: WORKER_URL,
       corePath: await coreUrl(),
       langPath: `${TESSERACT_DIR}/lang`,
@@ -53,10 +60,11 @@ function startOcr(): Promise<OcrWorker> {
       cacheMethod: "none",
     });
   })().catch((e) => {
-    worker = null;
+    if (worker?.ready === ready) worker = null;
     throw e;
   });
-  return worker;
+  worker = { langs, ready };
+  return ready;
 }
 
 /**
@@ -67,14 +75,14 @@ function startOcr(): Promise<OcrWorker> {
 async function resetOcr() {
   const old = worker;
   worker = null;
-  await old?.then((w) => w.terminate()).catch(() => {});
+  await old?.ready.then((w) => w.terminate()).catch(() => {});
 }
 
 /** Longest a single reading may take before the engine is taken to be stuck. */
 const READ_TIMEOUT_MS = 60_000;
 
-async function recognize(canvas: HTMLCanvasElement): Promise<string> {
-  const ocr = await startOcr();
+async function recognize(canvas: HTMLCanvasElement, langs: Langs): Promise<{ text: string; confidence: number }> {
+  const ocr = await startOcr(langs);
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const { data } = await Promise.race([
@@ -83,15 +91,15 @@ async function recognize(canvas: HTMLCanvasElement): Promise<string> {
         timer = setTimeout(() => reject(new Error(`Text reading took over ${READ_TIMEOUT_MS / 1000} s`)), READ_TIMEOUT_MS);
       }),
     ]);
-    return data.text;
+    return { text: data.text, confidence: data.confidence };
   } finally {
     clearTimeout(timer);
   }
 }
 
-/** A photo at a size Tesseract reads well and quickly, turned by `turn` degrees. */
-function prepare(bitmap: ImageBitmap, turn: 0 | 90 | 270): HTMLCanvasElement {
-  const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+/** A photo at a size Tesseract reads well and quickly (`side` pixels at most), turned by `turn` degrees. */
+function prepare(bitmap: ImageBitmap, turn: 0 | 90 | 270, side = 2000): HTMLCanvasElement {
+  const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
   const w = Math.round(bitmap.width * scale);
   const h = Math.round(bitmap.height * scale);
   const canvas = document.createElement("canvas");
@@ -120,28 +128,54 @@ const TURN_NAMES = { 0: "upright", 90: "turned right", 270: "turned left" } as c
  * more; throws if it still fails (or can't start: files not downloaded yet
  * and no signal).
  */
+/** Reads one orientation; a failed engine is restarted and the read tried once more. */
+async function readTurn(bitmap: ImageBitmap, turn: 0 | 90 | 270, langs: Langs, side?: number) {
+  const canvas = prepare(bitmap, turn, side);
+  try {
+    try {
+      return await recognize(canvas, langs);
+    } catch {
+      await resetOcr();
+      return await recognize(canvas, langs);
+    }
+  } catch (e) {
+    await resetOcr();
+    throw e;
+  } finally {
+    // Let the phone have the memory back now, not whenever it gets round to it.
+    canvas.width = canvas.height = 0;
+  }
+}
+
 export async function readIsbnsFromPhoto(bitmap: ImageBitmap): Promise<PhotoText> {
   const texts: string[] = [];
   for (const turn of [0, 90, 270] as const) {
-    const canvas = prepare(bitmap, turn);
-    let text: string;
-    try {
-      try {
-        text = await recognize(canvas);
-      } catch {
-        await resetOcr();
-        text = await recognize(canvas);
-      }
-    } catch (e) {
-      await resetOcr();
-      throw e;
-    } finally {
-      // Let the phone have the memory back now, not whenever it gets round to it.
-      canvas.width = canvas.height = 0;
-    }
+    const { text } = await readTurn(bitmap, turn, "eng");
     texts.push(`— ${TURN_NAMES[turn]} —\n${text.trim()}`);
     const found = findIsbns(text);
     if (found.length) return { found, text: texts.join("\n\n") };
   }
   return { found: [], text: texts.join("\n\n") };
+}
+
+/** A read this word-like (lib/extract-text.ts) and confident is taken as the right way up. */
+const GOOD_WORDS = 0.6;
+const CONFIDENT = 60;
+
+/**
+ * The text in a photo, for Extract (§22), with Tesseract's confidence
+ * (0–100). Read upright; if that doesn't look like real words, on its sides
+ * too, keeping the most word-like. Photos are read at up to 2400 px: body
+ * text on a back cover is small.
+ */
+export async function readTextFromPhoto(bitmap: ImageBitmap): Promise<{ text: string; confidence: number }> {
+  const score = (r: { text: string; confidence: number }) => wordLikeness(r.text) * Math.max(r.confidence, 1);
+  let best = await readTurn(bitmap, 0, "fin+eng", 2400);
+  if (wordLikeness(best.text) >= GOOD_WORDS && best.confidence >= CONFIDENT) return best;
+  for (const turn of [90, 270] as const) {
+    const read = await readTurn(bitmap, turn, "fin+eng", 2400);
+    if (score(read) > score(best)) best = read;
+    if (wordLikeness(best.text) >= GOOD_WORDS && best.confidence >= CONFIDENT) break;
+  }
+  return best;
 }

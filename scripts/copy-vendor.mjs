@@ -5,8 +5,8 @@
 //
 //   OpenCV.js  — cover camera edge detection (§15), one ~11 MB file
 //   Tesseract  — reading a printed ISBN from a photo (§19): its worker, its
-//                engine (the phone picks the variant it can run) and the
-//                English text data (enough for digits and "ISBN")
+//                engine (the phone picks the variant it can run), and the
+//                English (ISBNs) and Finnish (Extract, §22) text data
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -42,7 +42,9 @@ copy(join(modules, "tesseract.js", "dist", "worker.min.js"), join(tdir, "worker.
 for (const file of readdirSync(join(modules, "tesseract.js-core"))) {
   if (/^tesseract-core.*lstm\.wasm\.js$/.test(file)) copy(join(modules, "tesseract.js-core", file), join(tdir, file));
 }
-copy(join(modules, "@tesseract.js-data", "eng", "4.0.0_best_int", "eng.traineddata.gz"), join(tdir, "lang", "eng.traineddata.gz"));
+for (const lang of ["eng", "fin"]) {
+  copy(join(modules, "@tesseract.js-data", lang, "4.0.0_best_int", `${lang}.traineddata.gz`), join(tdir, "lang", `${lang}.traineddata.gz`));
+}
 
 // Old versions out.
 for (const entry of readdirSync(vendor)) {

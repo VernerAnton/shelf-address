@@ -71,7 +71,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           React hoists this into <head>.
         */}
         <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
-        <div className="flex flex-1 flex-col pb-[calc(4rem+env(safe-area-inset-bottom))]">
+        {/* Room for the bottom rows comes from BottomNav itself (it knows how many are showing). */}
+        <div className="flex flex-1 flex-col">
           {children}
           <VersionStamp />
         </div>

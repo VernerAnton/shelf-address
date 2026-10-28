@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { textFileName, tidyText, wordLikeness } from "./extract-text";
+import { textFileName, tidyAiText, tidyText, wordLikeness } from "./extract-text";
 
 describe("tidyText", () => {
   it("joins lines broken by the page width into one paragraph", () => {
@@ -56,5 +56,14 @@ describe("wordLikeness", () => {
   });
   it("is 0 for nothing", () => {
     expect(wordLikeness("")).toBe(0);
+  });
+});
+
+describe("tidyAiText", () => {
+  it("keeps the model's paragraphs, trims stray space and code fences", () => {
+    expect(tidyAiText("```\nEnsimmäinen kappale.  \n\n\n\nToinen kappale.\n```")).toBe("Ensimmäinen kappale.\n\nToinen kappale.");
+  });
+  it("leaves hyphens and letters exactly as given", () => {
+    expect(tidyAiText("EU-maissa, Etelä-Suomessa – Åbo.")).toBe("EU-maissa, Etelä-Suomessa – Åbo.");
   });
 });

@@ -7,8 +7,49 @@ import { readTextFromPhoto, warmOcr } from "@/lib/client/ocr";
 import { textFileName, tidyText } from "@/lib/extract-text";
 
 const TEXT_KEY = "extract:text";
+/** Remembered so the screen knows without signal; the server has the final say. */
+const LOGIN_KEY = "extract:login";
 /** Below this (Tesseract's 0–100), warn that the text needs checking. */
 const SHAKY = 70;
+/** Photos go to the AI at most this big: plenty for small print, quick to upload. */
+const AI_SIDE = 2000;
+
+type Ai = { configured: boolean; loggedIn: boolean };
+
+/** The photo, made smaller for the trip to the AI. */
+async function forAi(bitmap: ImageBitmap): Promise<Blob> {
+  const scale = Math.min(1, AI_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  canvas.width = canvas.height = 0;
+  if (!blob) throw new Error("Couldn't prepare the photo");
+  return blob;
+}
+
+/** Why the AI didn't read it, and whether it was because the login is gone. */
+class AiUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly loggedOut = false,
+  ) {
+    super(message);
+  }
+}
+
+async function readWithAi(bitmap: ImageBitmap): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch("/api/extract", { method: "POST", body: await forAi(bitmap), headers: { "content-type": "image/jpeg" } });
+  } catch {
+    throw new AiUnavailable("no signal");
+  }
+  const body = (await response.json().catch(() => null)) as { text?: string; error?: string; kind?: string } | null;
+  if (response.ok && typeof body?.text === "string") return body.text;
+  throw new AiUnavailable(body?.error ?? `error ${response.status}`, body?.kind === "login");
+}
 
 /**
  * Extract (docs/spec-corrections.md §22): photograph a book's back-cover
@@ -19,6 +60,11 @@ const SHAKY = 70;
  *
  * The text is kept on the phone as it's edited, so leaving for OneDrive (or
  * the phone closing the app while its camera is open) loses nothing.
+ *
+ * AI reading (§23): once this phone has logged in with the access code, the
+ * photo is read by a vision model through the app's server — far better on
+ * designed covers. Without the login, without signal, or if the AI fails,
+ * the phone reads it instead, and says so.
  */
 export function ExtractScreen() {
   const photoRef = useRef<HTMLInputElement>(null);
@@ -27,15 +73,62 @@ export function ExtractScreen() {
   const [reading, setReading] = useState(false);
   const [note, setNote] = useState<{ kind: "warn" | "ok" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
+  const [code, setCode] = useState("");
+  const [loginNote, setLoginNote] = useState<string | null>(null);
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
-    void kvGet<string>(TEXT_KEY).then((saved) => {
+    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY)]).then(([saved, known]) => {
       setText(saved ?? "");
+      if (known) setAi(known);
       setLoaded(true);
     });
-    // The Finnish reading data (about 4 MB, once) while the person lines up the book.
+    void fetch("/api/extract/login", { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<Ai>) : null))
+      .then((state) => {
+        if (!state) return;
+        setAi(state);
+        void kvSet(LOGIN_KEY, state);
+      })
+      .catch(() => {
+        // No signal: go by what was known.
+      });
+    // The Finnish reading data (about 4 MB, once) for the phone reader, the backup.
     warmOcr("fin+eng");
   }, []);
+
+  const rememberAi = (next: Ai) => {
+    setAi(next);
+    void kvSet(LOGIN_KEY, next);
+  };
+
+  const logIn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoggingIn(true);
+    setLoginNote(null);
+    try {
+      const response = await fetch("/api/extract/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (response.ok) {
+        rememberAi({ configured: true, loggedIn: true });
+        setCode("");
+      } else setLoginNote(body?.error ?? "Couldn't log in. Try again.");
+    } catch {
+      setLoginNote("No signal. Logging in needs a connection.");
+    } finally {
+      setLoggingIn(false);
+    }
+  };
+
+  const logOut = async () => {
+    await fetch("/api/extract/login", { method: "DELETE" }).catch(() => {});
+    rememberAi({ ...ai, loggedIn: false });
+  };
 
   const change = (next: string) => {
     setText(next);
@@ -49,17 +142,34 @@ export function ExtractScreen() {
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(file);
-      const { text: raw, confidence } = await readTextFromPhoto(bitmap);
-      const read = tidyText(raw);
+      let read: string | null = null;
+      let why: string | null = null;
+      if (ai.loggedIn) {
+        try {
+          read = await readWithAi(bitmap);
+        } catch (e) {
+          const reason = e instanceof AiUnavailable ? e : new AiUnavailable("it failed");
+          if (reason.loggedOut) rememberAi({ ...ai, loggedIn: false });
+          why = reason.loggedOut ? "this phone isn't logged in to AI reading any more" : reason.message.replace(/\.$/, "");
+        }
+      }
+      let confidence = 100;
+      if (read === null) {
+        const phone = await readTextFromPhoto(bitmap);
+        read = tidyText(phone.text);
+        confidence = phone.confidence;
+      }
       if (!read) {
         setNote({ kind: "error", text: "No text found in that photo. Try again closer, with the text filling the picture and good light." });
         return;
       }
       change(text.trim() ? `${text.trim()}\n\n${read}` : read);
       setNote(
-        confidence < SHAKY
-          ? { kind: "warn", text: "Parts of this may be read wrong — check it before sharing. A sharper, flatter, better-lit photo helps." }
-          : null,
+        why
+          ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
+          : confidence < SHAKY
+            ? { kind: "warn", text: "Parts of this may be read wrong — check it before sharing. A sharper, flatter, better-lit photo helps." }
+            : null,
       );
     } catch {
       setNote({
@@ -124,6 +234,37 @@ export function ExtractScreen() {
         </p>
       )}
 
+      {ai.configured && !ai.loggedIn && (
+        <form onSubmit={(e) => void logIn(e)} aria-label="AI reading login" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
+          <label htmlFor="extract-code" className="text-sm font-medium">
+            AI reading — much better on designed covers — needs the access code
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="extract-code"
+              type="password"
+              autoComplete="current-password"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              className="h-12 min-w-0 flex-1 rounded-xl border border-line bg-background px-3 text-base outline-none focus:border-accent"
+            />
+            <button
+              type="submit"
+              disabled={!code.trim() || loggingIn}
+              className="h-12 shrink-0 rounded-xl bg-accent px-4 font-medium text-accent-contrast disabled:opacity-40"
+            >
+              {loggingIn ? "…" : "Log in"}
+            </button>
+          </div>
+          {loginNote && (
+            <p role="alert" className="text-sm text-danger">
+              {loginNote}
+            </p>
+          )}
+          <p className="text-xs text-muted">Asked once on this phone. Without it, the phone reads the text itself (less accurate).</p>
+        </form>
+      )}
+
       <input
         ref={photoRef}
         type="file"
@@ -143,7 +284,18 @@ export function ExtractScreen() {
         <CameraIcon className="size-6" />
         {reading ? "Reading the text…" : has ? "Add another photo" : "Take a photo of the text"}
       </button>
-      {reading && <p className="-mt-2 text-center text-xs text-muted">This can take a little while on some phones.</p>}
+      {reading ? (
+        <p className="-mt-2 text-center text-xs text-muted">
+          {ai.loggedIn ? "The AI is reading it — usually a few seconds." : "This can take a little while on some phones."}
+        </p>
+      ) : ai.loggedIn ? (
+        <p className="-mt-2 text-center text-xs text-muted">
+          Read by AI ·{" "}
+          <button type="button" onClick={() => void logOut()} className="underline">
+            Log out
+          </button>
+        </p>
+      ) : null}
 
       {note && (
         <p

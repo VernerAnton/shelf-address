@@ -5,6 +5,11 @@
 //
 //   POST /__down?isbn=…&down=1   that ISBN's lookups fail (503 / 429) until down=0
 //   GET  /__log                  every path asked, in order
+//
+// Also OpenRouter, for Extract's AI reading (/api/v1/chat/completions), so
+// tests never reach the real AI or spend anything:
+//   POST /__ai?mode=ok|limit|badkey|slow   how it answers next (default ok)
+//   GET  /__ai                             the requests it got (model, prompt, image size)
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -43,6 +48,48 @@ const cover = png(120, 180, [150, 60, 40]);
 
 const DOWN = new Set();
 const log = [];
+const AI_KEY = "test-openrouter-key";
+const AI_TEXT = "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.";
+let aiMode = "ok";
+const aiRequests = [];
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+  });
+}
+
+async function chat(req, res) {
+  const body = JSON.parse((await readBody(req)) || "{}");
+  const content = body.messages?.[0]?.content ?? [];
+  const image = content.find((c) => c.type === "image_url")?.image_url?.url ?? "";
+  const jpeg = Buffer.from(image.split(",")[1] ?? "", "base64");
+  // JPEG size from its SOF marker, so tests can check the photo was made smaller.
+  let width = 0, height = 0;
+  for (let i = 2; i < jpeg.length - 9; ) {
+    if (jpeg[i] !== 0xff) break;
+    const marker = jpeg[i + 1], len = jpeg.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xc2) { height = jpeg.readUInt16BE(i + 5); width = jpeg.readUInt16BE(i + 7); break; }
+    i += 2 + len;
+  }
+  aiRequests.push({
+    auth: req.headers.authorization,
+    title: req.headers["x-title"],
+    model: body.model,
+    temperature: body.temperature,
+    prompt: content.find((c) => c.type === "text")?.text ?? "",
+    imageType: image.slice(5, image.indexOf(";")),
+    imageBytes: jpeg.length,
+    width,
+    height,
+  });
+  if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
+  if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
+  if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
+  json(res, 200, { choices: [{ message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }] });
+}
 
 http
   .createServer((req, res) => {
@@ -54,6 +101,11 @@ http
       return json(res, 200, { down: [...DOWN] });
     }
     if (p === "/__log") return json(res, 200, log);
+    if (p === "/__ai") {
+      if (req.method === "POST") aiMode = url.searchParams.get("mode") || "ok";
+      return json(res, 200, { mode: aiMode, requests: aiRequests });
+    }
+    if (p === "/api/v1/chat/completions" && req.method === "POST") return void chat(req, res);
     log.push(p + url.search);
     if (p.startsWith("/Cover/") || p.startsWith("/img/")) {
       res.writeHead(200, { "content-type": "image/png" });

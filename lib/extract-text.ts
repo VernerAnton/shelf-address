@@ -78,3 +78,15 @@ export function wordLikeness(text: string): number {
   }
   return all ? wordy / all : 0;
 }
+
+/** The model's answer, minus any stray formatting: trimmed, at most one blank line between paragraphs. */
+export function tidyAiText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/^```[a-z]*\n?|\n?```$/g, "")
+    .split("\n")
+    .map((l) => l.replace(/[ \t]+$/g, ""))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}

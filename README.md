@@ -130,6 +130,21 @@ simply move on to Open Library. A free key makes Google a real second source:
    **Variables and Secrets** → **Add**, type **Secret**, name
    `GOOGLE_BOOKS_API_KEY`, value the key.
 
+### Extract's AI reading (OpenRouter)
+
+Extract reads back covers with an AI vision model through OpenRouter. Until
+both secrets below are set, Extract uses the phone's own (weaker) reader.
+
+1. On openrouter.ai: add a little credit, then **Keys → Create key**. Give the
+   key a **credit limit** (e.g. $1, reset weekly) — that's the spending cap.
+2. In Cloudflare: **Workers & Pages** → **shelf-address** → **Settings** →
+   **Variables and Secrets** → **Add**, type **Secret**:
+   - `OPENROUTER_API_KEY` — the key from step 1;
+   - `EXTRACT_CODE` — the access code people type once per phone. Changing it
+     later logs every phone out of AI reading.
+3. Optional: a variable `EXTRACT_MODEL` to use another OpenRouter model
+   (default `google/gemini-3.8-flash`).
+
 ### Optional: deploy automatically on every push
 
 `.github/workflows/deploy.yml` deploys `main` to Cloudflare on push. It stays

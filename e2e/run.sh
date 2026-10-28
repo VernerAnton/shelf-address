@@ -39,6 +39,7 @@ for t in "${suites[@]}"; do
   (nohup npx wrangler dev --port 8788 --local \
     --var FINNA_API_BASE:$BOOKS --var FINNA_COVER_BASE:$BOOKS --var GOOGLE_BOOKS_API_BASE:$BOOKS \
     --var OPEN_LIBRARY_BASE:$BOOKS --var OPEN_LIBRARY_COVERS_BASE:$BOOKS \
+    --var OPENROUTER_BASE:$BOOKS/api/v1 --var OPENROUTER_API_KEY:test-openrouter-key --var EXTRACT_CODE:test-code \
     > .wrangler/e2e-wrangler.log 2>&1 &)
   curl -s --noproxy '*' --retry 90 --retry-delay 1 --retry-connrefused --retry-all-errors -o /dev/null http://127.0.0.1:8788/api/version
   echo "== $t: $(timeout 1200 node e2e/$t 2>&1 | tail -12 | tr '\n' ' ')"

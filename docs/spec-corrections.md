@@ -486,3 +486,30 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   earlier suites lived in a session's scratch folder and were lost when the
   cloud environment was reset; the launch and photo-log suites were
   recovered, and new ones cover Extract and the bottom rows.
+
+## 23. Extract reads with AI, behind an access code.
+
+**Adds to:** §22. The on-phone reader couldn't cope with designed back covers
+(decorative fonts, coloured backgrounds, text over pictures).
+
+- **AI reading by default.** The photo (made smaller on the phone: 2000 px,
+  JPEG) goes to the app's server (`/api/extract`), which asks a vision model
+  on OpenRouter to transcribe it — `google/gemini-3.8-flash`, chosen on price
+  per photo; `EXTRACT_MODEL` can name another. The instructions
+  (`lib/extract-ai.ts`): copy exactly, keep ä/ö/å, join lines into
+  paragraphs, leave out price stickers, barcodes, ISBNs and logos, write [?]
+  for what can't be read, add nothing. Temperature 0.
+- **Only Extract's AI needs a login** — the rest of the app stays open. One
+  shared access code (`EXTRACT_CODE`, a Worker secret), asked once per
+  phone. The login is an HttpOnly, SameSite=Strict cookie for `/api/extract`
+  only, derived from the code (an HMAC), so it never holds the code and
+  changing the code logs every phone out. Browsers keep cookies 400 days at
+  most; each visit to Extract renews it. After 10 wrong codes in an hour from
+  one address, tries are refused (`extract_login_failures`, migration 0009).
+- **Spending** is capped on OpenRouter (a weekly limit on the key), not in
+  the app. The key (`OPENROUTER_API_KEY`) is a Worker secret, never on the
+  phone.
+- **The phone reader stays as the backup.** Not logged in, no signal, the
+  limit used up, the key not working, or the AI failing or taking over 60 s:
+  the phone reads it instead, and says why. Until the code and key are set,
+  Extract just uses the phone reader.

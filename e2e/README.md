@@ -1,9 +1,11 @@
 # End-to-end tests
 
 Real (headless) Chromium against the app running locally (`wrangler dev`),
-with a fresh local database per suite and a stand-in for the book services
-(`mock-books.cjs`, answering from `lib/lookup/__fixtures__`). Nothing touches
-production or the real Finna / Google Books / Open Library / Antikvaari.
+with a fresh local database per suite and a stand-in for the outside services
+(`mock-books.cjs`: the book lookups, answering from `lib/lookup/__fixtures__`,
+and OpenRouter for Extract's AI). Nothing touches production or the real
+Finna / Google Books / Open Library / Antikvaari / OpenRouter, and nothing is
+spent. The local app gets the access code `test-code`.
 
 ```sh
 npx opennextjs-cloudflare build      # after changing the app
@@ -31,7 +33,8 @@ bash e2e/serve.sh places             # just start it, to poke at by hand (stop: 
 | e2e-evaluate | Evaluate switches, return detection, typing, title search |
 | e2e-camera-help | weak cameras (simulated Galaxy A26), zoom/light remembered, printed ISBNs |
 | e2e-photo-log | photo log, reader recovery, lost photos |
-| e2e-extract | Extract: reading, tidying, sharing, copying |
+| e2e-extract | Extract: reading on the phone, tidying, sharing, copying |
+| e2e-extract-ai | Extract's AI reading: access code, OpenRouter (stand-in), phone fallback |
 | e2e-nav | the bottom rows |
 | e2e-launch | installed app opening on Evaluate |
 | e2e-update | update prompt, service worker, offline pages |

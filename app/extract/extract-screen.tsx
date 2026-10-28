@@ -334,7 +334,7 @@ export function ExtractScreen() {
           <p className="text-xs text-muted">
             Share sends it as a text file: choose OneDrive to have it on the computer, or email, or anything else.
           </p>
-          <button type="button" onClick={startOver} className="h-10 self-center px-4 text-sm text-muted">
+          <button type="button" onClick={startOver} className={`${button} mt-2 bg-accent text-accent-contrast`}>
             Start over
           </button>
         </section>

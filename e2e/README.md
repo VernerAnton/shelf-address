@@ -35,6 +35,7 @@ bash e2e/serve.sh places             # just start it, to poke at by hand (stop: 
 | e2e-photo-log | photo log, reader recovery, lost photos |
 | e2e-extract | Extract: reading on the phone, tidying, sharing, copying |
 | e2e-extract-ai | Extract's AI reading: access code, OpenRouter (stand-in), phone fallback |
+| e2e-saved-texts | Saved texts: phone to computer, corrections, Copy/Download/Done/Delete, offline, layouts |
 | e2e-nav | the bottom rows |
 | e2e-launch | installed app opening on Evaluate |
 | e2e-update | update prompt, service worker, offline pages |

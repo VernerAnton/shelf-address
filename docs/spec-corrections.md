@@ -513,3 +513,24 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   limit used up, the key not working, or the AI failing or taking over 60 s:
   the phone reads it instead, and says why. Until the code and key are set,
   Extract just uses the phone reader.
+
+## 24. Saved texts: Extract's texts on the computer, no sharing step.
+
+**Adds to:** §22, §23. Sharing to OneDrive took too many taps.
+
+- On a phone logged in to AI reading, every text Extract reads is saved to
+  the server by itself (`saved_texts`, migration 0010), and so is every
+  correction (a second after typing pauses, or straight away when the app
+  is left). "Start over" begins a new text; the old one stays saved. Without
+  signal the latest version waits on the phone (`lib/client/saved-texts.ts`)
+  and goes up when signal returns; an older version arriving late never
+  overwrites a newer one. Phones not logged in save nothing (Share and Copy
+  are still there).
+- **Saved texts page** (`/extract/saved`, linked from Extract): behind the
+  same access code (the computer's browser logs in once). Newest first, each
+  marked AI or "read by phone — check"; the selected text with **Copy**,
+  **Download .txt**, **Mark done** (greyed in the list) and **Delete**.
+  Refreshes every 5 s while on screen, so a text read on a phone appears
+  within seconds. On a big screen the list and the text sit side by side; on
+  a phone, the list, and a tap opens one.
+- Texts are deleted 30 days after their last change.

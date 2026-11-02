@@ -2,13 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CameraIcon } from "@/components/icons";
+import Link from "next/link";
 import { kvGet, kvSet } from "@/lib/client/kv";
+import { queueText, syncTexts, type SyncResult } from "@/lib/client/saved-texts";
 import { readTextFromPhoto, warmOcr } from "@/lib/client/ocr";
 import { textFileName, tidyText } from "@/lib/extract-text";
+import { LoginForm } from "./_components/login-form";
 
 const TEXT_KEY = "extract:text";
 /** Remembered so the screen knows without signal; the server has the final say. */
 const LOGIN_KEY = "extract:login";
+/** The saved text the screen is working on (§24): its id, when it was started, how it was read. */
+const CURRENT_KEY = "extract:current";
+type Current = { id: string; createdAt: string; source: "ai" | "phone" };
+/** How long typing pauses before a correction is saved. */
+const SAVE_AFTER_MS = 1000;
 /** Below this (Tesseract's 0–100), warn that the text needs checking. */
 const SHAKY = 70;
 /** Photos go to the AI at most this big: plenty for small print, quick to upload. */
@@ -65,6 +73,10 @@ async function readWithAi(bitmap: ImageBitmap): Promise<string> {
  * photo is read by a vision model through the app's server — far better on
  * designed covers. Without the login, without signal, or if the AI fails,
  * the phone reads it instead, and says so.
+ *
+ * Saved texts (§24): on a logged-in phone, each text — and every correction —
+ * is saved to the server by itself, so it's on the computer under Saved texts
+ * within seconds. "Start over" begins a new one. Without signal it waits.
  */
 export function ExtractScreen() {
   const photoRef = useRef<HTMLInputElement>(null);
@@ -74,22 +86,28 @@ export function ExtractScreen() {
   const [note, setNote] = useState<{ kind: "warn" | "ok" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
-  const [code, setCode] = useState("");
-  const [loginNote, setLoginNote] = useState<string | null>(null);
-  const [loggingIn, setLoggingIn] = useState(false);
+  const [save, setSave] = useState<SyncResult | "saving" | null>(null);
+  const current = useRef<Current | null>(null);
+  const pendingSave = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
 
   useEffect(() => {
-    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY)]).then(([saved, known]) => {
+    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY), kvGet<Current | null>(CURRENT_KEY)]).then(([saved, known, cur]) => {
       setText(saved ?? "");
       if (known) setAi(known);
+      current.current = cur ?? null;
       setLoaded(true);
     });
     void fetch("/api/extract/login", { cache: "no-store" })
       .then((r) => (r.ok ? (r.json() as Promise<Ai>) : null))
-      .then((state) => {
+      .then(async (state) => {
         if (!state) return;
         setAi(state);
         void kvSet(LOGIN_KEY, state);
+        // Anything left from before (no signal then) goes up now.
+        if (state.loggedIn) {
+          const result = await syncTexts();
+          if (current.current) setSave(result);
+        }
       })
       .catch(() => {
         // No signal: go by what was known.
@@ -103,36 +121,53 @@ export function ExtractScreen() {
     void kvSet(LOGIN_KEY, next);
   };
 
-  const logIn = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoggingIn(true);
-    setLoginNote(null);
-    try {
-      const response = await fetch("/api/extract/login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      if (response.ok) {
-        rememberAi({ configured: true, loggedIn: true });
-        setCode("");
-      } else setLoginNote(body?.error ?? "Couldn't log in. Try again.");
-    } catch {
-      setLoginNote("No signal. Logging in needs a connection.");
-    } finally {
-      setLoggingIn(false);
-    }
-  };
-
   const logOut = async () => {
     await fetch("/api/extract/login", { method: "DELETE" }).catch(() => {});
     rememberAi({ ...ai, loggedIn: false });
+    setSave(null);
   };
 
-  const change = (next: string) => {
+  /** Sends the text to Saved texts (logged-in phones only), now or after typing pauses. */
+  const saveSoon = (next: string, readBy: "ai" | "phone" | null, delay: number) => {
+    if (!ai.loggedIn || !next.trim()) return;
+    if (pendingSave.current) clearTimeout(pendingSave.current.timer);
+    const now = new Date().toISOString();
+    const before = current.current;
+    // Any part read by the phone reader marks the text as worth checking.
+    const cur: Current = before
+      ? { ...before, source: readBy === "phone" ? "phone" : before.source }
+      : { id: crypto.randomUUID(), createdAt: now, source: readBy ?? "ai" };
+    current.current = cur;
+    void kvSet(CURRENT_KEY, cur);
+    setSave("saving");
+    const run = () => {
+      pendingSave.current = null;
+      void queueText({ ...cur, text: next.trim(), updatedAt: now })
+        .then(syncTexts)
+        .then((result) => {
+          setSave(result);
+          if (result === "loggedout") rememberAi({ ...ai, loggedIn: false });
+        });
+    };
+    pendingSave.current = { timer: setTimeout(run, delay), run };
+  };
+
+  // Leaving the app (for OneDrive, the camera…): save a pending correction now.
+  useEffect(() => {
+    const flush = () => {
+      if (document.visibilityState === "hidden" && pendingSave.current) {
+        clearTimeout(pendingSave.current.timer);
+        pendingSave.current.run();
+      }
+    };
+    document.addEventListener("visibilitychange", flush);
+    return () => document.removeEventListener("visibilitychange", flush);
+  }, []);
+
+  const change = (next: string, readBy: "ai" | "phone" | null = null) => {
     setText(next);
     void kvSet(TEXT_KEY, next);
+    saveSoon(next, readBy, readBy ? 0 : SAVE_AFTER_MS);
   };
 
   const onPhoto = async (file: File | undefined) => {
@@ -154,7 +189,9 @@ export function ExtractScreen() {
         }
       }
       let confidence = 100;
+      let readBy: "ai" | "phone" = "ai";
       if (read === null) {
+        readBy = "phone";
         const phone = await readTextFromPhoto(bitmap);
         read = tidyText(phone.text);
         confidence = phone.confidence;
@@ -163,7 +200,7 @@ export function ExtractScreen() {
         setNote({ kind: "error", text: "No text found in that photo. Try again closer, with the text filling the picture and good light." });
         return;
       }
-      change(text.trim() ? `${text.trim()}\n\n${read}` : read);
+      change(text.trim() ? `${text.trim()}\n\n${read}` : read, readBy);
       setNote(
         why
           ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
@@ -215,8 +252,16 @@ export function ExtractScreen() {
 
   const startOver = () => {
     if (!window.confirm("Clear the text and start over?")) return;
+    // What was there stays in Saved texts; the next text is a new one.
+    if (pendingSave.current) {
+      clearTimeout(pendingSave.current.timer);
+      pendingSave.current.run();
+    }
+    current.current = null;
+    void kvSet(CURRENT_KEY, null);
     change("");
     setNote(null);
+    setSave(null);
   };
 
   if (!loaded) return <p className="text-muted">Loading…</p>;
@@ -235,34 +280,11 @@ export function ExtractScreen() {
       )}
 
       {ai.configured && !ai.loggedIn && (
-        <form onSubmit={(e) => void logIn(e)} aria-label="AI reading login" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
-          <label htmlFor="extract-code" className="text-sm font-medium">
-            AI reading — much better on designed covers — needs the access code
-          </label>
-          <div className="flex gap-2">
-            <input
-              id="extract-code"
-              type="password"
-              autoComplete="current-password"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              className="h-12 min-w-0 flex-1 rounded-xl border border-line bg-background px-3 text-base outline-none focus:border-accent"
-            />
-            <button
-              type="submit"
-              disabled={!code.trim() || loggingIn}
-              className="h-12 shrink-0 rounded-xl bg-accent px-4 font-medium text-accent-contrast disabled:opacity-40"
-            >
-              {loggingIn ? "…" : "Log in"}
-            </button>
-          </div>
-          {loginNote && (
-            <p role="alert" className="text-sm text-danger">
-              {loginNote}
-            </p>
-          )}
-          <p className="text-xs text-muted">Asked once on this phone. Without it, the phone reads the text itself (less accurate).</p>
-        </form>
+        <LoginForm
+          label="AI reading — much better on designed covers — needs the access code"
+          hint="Asked once on this phone. Without it, the phone reads the text itself (less accurate) and it isn't saved for the computer."
+          onLoggedIn={() => rememberAi({ configured: true, loggedIn: true })}
+        />
       )}
 
       <input
@@ -291,6 +313,10 @@ export function ExtractScreen() {
       ) : ai.loggedIn ? (
         <p className="-mt-2 text-center text-xs text-muted">
           Read by AI ·{" "}
+          <Link href="/extract/saved" className="font-medium text-accent">
+            Saved texts
+          </Link>{" "}
+          ·{" "}
           <button type="button" onClick={() => void logOut()} className="underline">
             Log out
           </button>
@@ -323,6 +349,25 @@ export function ExtractScreen() {
             spellCheck
             className="min-h-60 w-full rounded-xl border border-line bg-surface p-3 text-base leading-relaxed outline-none focus:border-accent"
           />
+          {ai.loggedIn && save && (
+            <p role="status" aria-label="Saved for the computer" className={`-mt-1 text-sm ${save === "loggedout" ? "text-danger" : "text-muted"}`}>
+              {save === "saved" ? (
+                <>
+                  ✓ Saved — it&apos;s on the computer under{" "}
+                  <Link href="/extract/saved" className="font-medium text-accent">
+                    Saved texts
+                  </Link>
+                  .
+                </>
+              ) : save === "saving" ? (
+                "Saving…"
+              ) : save === "waiting" ? (
+                "No signal — it'll be saved for the computer by itself when there's signal."
+              ) : (
+                "Not saved: this phone isn't logged in any more. Log in again above."
+              )}
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <button type="button" onClick={() => void share()} className={`${button} bg-accent text-accent-contrast`}>
               Share

@@ -36,6 +36,18 @@ const installed = () => {
     await ctx.close();
   }
   {
+    // An installed app on a computer (a Chromebook): opens on Saved texts.
+    const ctx = await browser.newContext({ baseURL: "http://127.0.0.1:8788", viewport: { width: 1280, height: 800 }, userAgent: "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36" });
+    await ctx.addInitScript(installed);
+    const page = await ctx.newPage(); page.on("pageerror", (e) => errors.push(String(e)));
+    await page.goto("/evaluate");
+    await page.waitForURL(/\/extract\/saved$/, { timeout: 10000 }).catch(() => {});
+    check("installed on a computer: opens on Saved texts", page.url().endsWith("/extract/saved"), page.url());
+    await page.goto("/evaluate"); await sleep(1500);
+    check("…and Evaluate still opens when chosen", page.url().endsWith("/evaluate"), page.url());
+    await ctx.close();
+  }
+  {
     // A normal browser tab: /scan is just Scan.
     const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788" });
     const page = await ctx.newPage(); page.on("pageerror", (e) => errors.push(String(e)));

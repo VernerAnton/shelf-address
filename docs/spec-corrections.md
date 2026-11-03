@@ -546,3 +546,7 @@ printed ISBN worked a couple of times and then failed ten times in a row.
 - Phone or computer is told from the browser's User-Agent (`lib/device.ts`:
   "Mobi", Android, iPhone, iPod → phone). An iPad reports itself as a Mac and
   counts as a computer.
+- An app installed on a computer (a Chromebook) opens on its saved start page
+  (`/evaluate`); the launch check in `app/layout.tsx` sends a computer's
+  launch on to Saved texts, as it sends a phone's old `/scan` launch to
+  Evaluate.

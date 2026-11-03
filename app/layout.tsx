@@ -41,18 +41,25 @@ export const viewport: Viewport = {
 };
 
 /**
- * The app opens on Evaluate (docs/spec-corrections.md §20). A phone keeps the
- * start page it was given when the app was installed (/scan before V14) and
- * may never refresh it (iPhone), so a launch that lands on /scan is sent on
- * to /evaluate here, before anything shows. Only a launch: the installed app,
- * the first page of the session, a fresh load — not a reload, not the Scan
- * tab, not a browser tab.
+ * Where the installed app opens (docs/spec-corrections.md §20, §25), fixed up
+ * here before anything shows, because an installed app keeps the start page
+ * it was installed with and may never refresh it (iPhone):
+ * - a phone opens on Evaluate (a launch landing on /scan, the start page
+ *   before V14, goes on to /evaluate);
+ * - a computer (a Chromebook, say) opens on Saved texts: a launch landing on
+ *   /, /evaluate or /scan goes on to /extract/saved. Phone or computer as in
+ *   lib/device.ts.
+ * Only a launch: the installed app, the first page of the session, a fresh
+ * load — not a reload, not a tab tapped, not a browser tab.
  */
-const LAUNCH_TO_EVALUATE = `(function(){try{
+const LAUNCH_TO_START = `(function(){try{
 var first=!sessionStorage.getItem("launched");sessionStorage.setItem("launched","1");
 var app=matchMedia("(display-mode: standalone)").matches||navigator.standalone===true;
 var nav=performance.getEntriesByType("navigation")[0];
-if(first&&app&&location.pathname==="/scan"&&!location.search&&(!nav||nav.type==="navigate"))location.replace("/evaluate");
+if(!first||!app||location.search||(nav&&nav.type!=="navigate"))return;
+var phone=/Mobi|Android|iPhone|iPod/i.test(navigator.userAgent),p=location.pathname;
+if(!phone&&(p==="/"||p==="/evaluate"||p==="/scan"))location.replace("/extract/saved");
+else if(phone&&p==="/scan")location.replace("/evaluate");
 }catch(e){}})();`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -62,7 +69,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <script dangerouslySetInnerHTML={{ __html: LAUNCH_TO_EVALUATE }} />
+        <script dangerouslySetInnerHTML={{ __html: LAUNCH_TO_START }} />
         {/*
           Written by hand rather than via Next's `manifest` metadata so it can
           carry crossOrigin="use-credentials". Browsers fetch the manifest

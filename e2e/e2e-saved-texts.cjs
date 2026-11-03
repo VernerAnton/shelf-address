@@ -65,7 +65,7 @@ const t = suite();
   check("phone: AI text read", aiRead);
   check("phone: says it's saved for the computer", await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/Saved — it's on the computer/), 15000));
   check("stored once, marked as read by AI", rows().length === 1 && rows()[0].text === AI_TEXT && rows()[0].source === "ai", JSON.stringify(rows()));
-  const list = pc.getByRole("list", { name: "Saved texts" });
+  const list = pc.locator("[aria-label='Saved texts']");
   check("computer: appears without reloading", await visible(list.getByRole("button", { name: /Väinö Linnan romaani/ }), 15000));
   const shown = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
   check("computer: newest opened straight away, in full", await visible(shown) && (await shown.inputValue()).trim() === AI_TEXT);
@@ -126,11 +126,16 @@ const t = suite();
   await list.getByRole("button").last().click();
 
   // Done, not done, delete.
-  await pc.getByRole("button", { name: "Mark done" }).click();
-  check("Mark done: shown as done", await visible(list.getByText("✓ Done")));
+  check("two texts to do, no Done section yet", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
+  await pc.getByRole("button", { name: "✓ Mark done" }).click();
+  const doneSection = pc.getByRole("region", { name: "Done" });
+  check("Mark done: moves it down to the Done section", await visible(doneSection.getByRole("button", { name: /Väinö/ })) && await visible(pc.getByRole("heading", { name: "To do (1)" })));
+  check("…and the next text to do opens", (await pc.getByRole("region", { name: "To do" }).getByRole("button").first().getAttribute("aria-current")) === "true");
   await sleep(1000);
   check("…stored", rows().filter((r) => r.done_at).length === 1);
+  await doneSection.getByRole("button").first().click();
   await pc.getByRole("button", { name: "Not done" }).click();
+  check("Not done: back up to To do", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
   await sleep(1000);
   check("Not done undoes it", rows().every((r) => !r.done_at));
   pc.once("dialog", (d) => d.accept());
@@ -150,7 +155,7 @@ const t = suite();
 
   // On the phone: the list, then a tap opens one.
   await page.goto("/extract/saved");
-  const plist = page.getByRole("list", { name: "Saved texts" });
+  const plist = page.locator("[aria-label='Saved texts']");
   check("phone: the list (already logged in)", await visible(plist));
   check("phone: no text open yet", (await page.getByRole("region", { name: "Selected text" }).count()) === 0);
   await plist.getByRole("button").first().click();
@@ -176,7 +181,7 @@ const t = suite();
   let synced = false;
   for (let i = 0; i < 20 && !synced; i++) { await sleep(500); synced = rows().some((r) => r.text.includes("ilman signaalia")); }
   check("back online: saved by itself", synced && rows().length === before);
-  check("computer: shows it", await visible(pc.getByRole("list", { name: "Saved texts" }).getByRole("button", { name: /Väinö/ }).first(), 15000));
+  check("computer: shows it", await visible(pc.locator("[aria-label='Saved texts']").getByRole("button", { name: /Väinö/ }).first(), 15000));
 
   await b.close();
   t.done();

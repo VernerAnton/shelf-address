@@ -141,8 +141,16 @@ export function SavedTexts() {
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
 
+  /**
+   * Done: the text moves down to the Done section, and the next one still to
+   * do opens (on a phone, back to the list). Not done: it moves back up.
+   */
   const setDone = async (t: SavedText, done: boolean) => {
     setTexts((all) => all.map((x) => (x.id === t.id ? { ...x, doneAt: done ? new Date().toISOString() : null } : x)));
+    if (done) {
+      const next = texts.find((x) => !x.doneAt && x.id !== t.id);
+      open(next && window.matchMedia("(min-width: 768px)").matches ? next.id : null);
+    }
     await fetch(`/api/extract/texts/${t.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ done }) }).catch(() => {});
     void load();
   };
@@ -158,6 +166,25 @@ export function SavedTexts() {
   };
 
   const button = "flex h-12 items-center justify-center whitespace-nowrap rounded-xl px-3 font-medium md:px-5";
+  const todo = texts.filter((t) => !t.doneAt);
+  const done = texts.filter((t) => t.doneAt);
+
+  const row = (t: SavedText) => (
+    <li key={t.id} className="border-b border-line last:border-0">
+      <button
+        type="button"
+        onClick={() => open(t.id)}
+        aria-current={t.id === selected ? "true" : undefined}
+        className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${t.id === selected ? "bg-accent/10" : "active:bg-line/50"}`}
+      >
+        <span className="flex items-center justify-between gap-2 text-xs text-muted">
+          <span>{when(t.createdAt)}</span>
+          <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
+        </span>
+        <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
+      </button>
+    </li>
+  );
 
   return (
     <>
@@ -172,24 +199,22 @@ export function SavedTexts() {
         </p>
       ) : (
         <div className="md:grid md:grid-cols-[20rem_1fr] md:items-start md:gap-6">
-          <ul aria-label="Saved texts" className={`overflow-hidden rounded-xl border border-line bg-surface ${text ? "hidden md:block" : ""}`}>
-            {texts.map((t) => (
-              <li key={t.id} className="border-b border-line last:border-0">
-                <button
-                  type="button"
-                  onClick={() => open(t.id)}
-                  aria-current={t.id === selected ? "true" : undefined}
-                  className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${t.id === selected ? "bg-accent/10" : "active:bg-line/50"} ${t.doneAt ? "opacity-55" : ""}`}
-                >
-                  <span className="flex items-center justify-between gap-2 text-xs text-muted">
-                    <span>{when(t.createdAt)}</span>
-                    <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
-                  </span>
-                  <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <div aria-label="Saved texts" className={`flex flex-col gap-6 ${text ? "hidden md:flex" : ""}`}>
+            <section aria-label="To do" className="flex flex-col gap-2">
+              <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
+              {todo.length ? (
+                <ul className="overflow-hidden rounded-xl border border-line bg-surface">{todo.map(row)}</ul>
+              ) : (
+                <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">Nothing left to do.</p>
+              )}
+            </section>
+            {done.length > 0 && (
+              <section aria-label="Done" className="flex flex-col gap-2">
+                <h2 className="px-1 text-sm font-semibold text-muted">✓ Done ({done.length})</h2>
+                <ul className="overflow-hidden rounded-xl border border-line bg-surface opacity-60">{done.map(row)}</ul>
+              </section>
+            )}
+          </div>
 
           {text && (
             <section aria-label="Selected text" className="flex flex-col gap-3">
@@ -201,8 +226,8 @@ export function SavedTexts() {
                 {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
                 {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
                 {text.editedOnComputerAt && " · corrected on the computer"}
-                {text.doneAt && " · ✓ done"}
               </p>
+              {text.doneAt && <p className="-mt-1 text-sm font-medium text-muted">✓ Done — moved to the Done list.</p>}
               <textarea
                 aria-label="Text"
                 value={shown}
@@ -229,8 +254,12 @@ export function SavedTexts() {
                 <button type="button" onClick={() => download(text)} className={`${button} border border-line bg-surface`}>
                   Download .txt
                 </button>
-                <button type="button" onClick={() => void setDone(text, !text.doneAt)} className={`${button} border border-line bg-surface`}>
-                  {text.doneAt ? "Not done" : "Mark done"}
+                <button
+                  type="button"
+                  onClick={() => void setDone(text, !text.doneAt)}
+                  className={`${button} border border-line bg-surface`}
+                >
+                  {text.doneAt ? "Not done" : "✓ Mark done"}
                 </button>
                 <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
                   Delete

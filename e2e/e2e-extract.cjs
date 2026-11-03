@@ -96,10 +96,12 @@ const MORE = ["Kansi: Otava. Painettu EU-", "maissa vuonna 2004."];
   check("no text: explained", await visible(page.getByText(/No text found in that photo/), 120000));
   await browser.close();
 
-  // A computer's browser has no share menu: the file is saved instead.
+  // A phone browser with no share menu: the file is saved instead.
   {
     const b = await chromium.launch();
-    const p = await (await b.newContext({ baseURL: "http://127.0.0.1:8788", acceptDownloads: true })).newPage();
+    const pctx = await b.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788", acceptDownloads: true });
+    await pctx.addInitScript(() => { delete Navigator.prototype.share; delete Navigator.prototype.canShare; });
+    const p = await pctx.newPage();
     p.on("pageerror", (e) => errors.push(String(e)));
     await p.goto("/extract");
     await p.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("shelf-address", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => { const tx = r.result.transaction("kv", "readwrite"); tx.objectStore("kv").put("Kirjan takakansi.", "extract:text"); tx.oncomplete = () => resolve(); }; }));

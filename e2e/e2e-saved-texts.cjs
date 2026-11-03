@@ -41,6 +41,15 @@ const t = suite();
   check("…and no 'saved' line", (await page.getByRole("status", { name: "Saved for the computer" }).count()) === 0);
   const refused = await pc.request.get("/api/extract/texts");
   check("the list can't be read without the code", refused.status() === 401);
+  // A computer opens straight on Saved texts — from the app's address, and from the Extract tab.
+  await pc.goto("/");
+  check("computer: the app opens on Saved texts", await pc.waitForURL(/\/extract\/saved$/).then(() => true, () => false), pc.url());
+  await pc.goto("/extract");
+  check("computer: the Extract tab goes to Saved texts too", /\/extract\/saved$/.test(pc.url()), pc.url());
+  await page.goto("/");
+  check("phone: still opens on Evaluate", await page.waitForURL(/\/evaluate$/).then(() => true, () => false), page.url());
+  await page.goto("/extract");
+  check("phone: Extract tab is still the camera", await visible(page.getByRole("heading", { name: "Extract" })));
   await pc.goto("/extract/saved");
   check("computer: asks for the access code", await visible(pc.getByRole("form", { name: "AI reading login" }).getByText("Saved texts need the access code")));
   await logIn(pc);

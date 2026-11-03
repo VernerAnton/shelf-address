@@ -534,3 +534,15 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   within seconds. On a big screen the list and the text sit side by side; on
   a phone, the list, and a tap opens one.
 - Texts are deleted 30 days after their last change.
+
+## 25. A computer opens on Saved texts.
+
+**Changes:** §20 (the app opens on Evaluate).
+
+- Nobody photographs books with a computer; it's where Extract's texts are
+  picked up. So on a computer the app's address (`/`) and the Extract tab
+  (`/extract`) go straight to Saved texts. Phones are unchanged: `/` opens
+  Evaluate, Extract is the camera.
+- Phone or computer is told from the browser's User-Agent (`lib/device.ts`:
+  "Mobi", Android, iPhone, iPod → phone). An iPad reports itself as a Mac and
+  counts as a computer.

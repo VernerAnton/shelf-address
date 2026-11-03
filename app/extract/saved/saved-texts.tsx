@@ -1,13 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { textFileName } from "@/lib/extract-text";
 import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
 
 /** How often the list checks for new texts while it's on screen. */
 const REFRESH_MS = 5000;
+/** How long typing pauses before a correction is saved. */
+const SAVE_AFTER_MS = 800;
+
+/** A correction being typed on the computer: shown instead of the server's text until another text is opened. */
+type Draft = { id: string; text: string; status: "saving" | "saved" | "error"; error?: string };
 
 function when(iso: string) {
   return new Date(iso).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -21,12 +26,18 @@ const firstWords = (text: string) => text.replace(/\s+/g, " ").slice(0, 90);
  * (list on the left, the text on the right) as that's where it's used; on a
  * phone, the list, and a tap opens one. Refreshes itself, so a text read on a
  * phone appears here within seconds.
+ *
+ * The text can be corrected here (§26) — easier than on a phone. Corrections
+ * save by themselves; once a text is corrected here, the phone can't change
+ * it any more.
  */
 export function SavedTexts() {
   const [state, setState] = useState<"loading" | "login" | "ready" | "offline">("loading");
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const pending = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -74,10 +85,46 @@ export function SavedTexts() {
   }
 
   const text = texts.find((t) => t.id === selected) ?? null;
+  const shown = text && draft?.id === text.id ? draft.text : (text?.text ?? "");
+
+  /** Saves a correction now (the pending one, if any). */
+  const flush = () => {
+    if (!pending.current) return;
+    clearTimeout(pending.current.timer);
+    pending.current.run();
+  };
+
+  const edit = (t: SavedText, value: string) => {
+    setDraft({ id: t.id, text: value, status: "saving" });
+    if (pending.current) clearTimeout(pending.current.timer);
+    const run = async () => {
+      pending.current = null;
+      try {
+        const response = await fetch(`/api/extract/texts/${t.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: value }),
+        });
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        if (!response.ok) throw new Error(body?.error ?? "Couldn't save the correction.");
+        setDraft((d) => (d?.id === t.id && d.text === value ? { ...d, status: "saved" } : d));
+        setTexts((all) => all.map((x) => (x.id === t.id ? { ...x, text: value.trim(), editedOnComputerAt: new Date().toISOString() } : x)));
+      } catch (e) {
+        setDraft((d) => (d?.id === t.id && d.text === value ? { ...d, status: "error", error: (e as Error).message } : d));
+      }
+    };
+    pending.current = { timer: setTimeout(() => void run(), SAVE_AFTER_MS), run: () => void run() };
+  };
+
+  const open = (id: string | null) => {
+    flush();
+    setDraft(null);
+    setSelected(id);
+  };
 
   const copy = async (t: SavedText) => {
     try {
-      await navigator.clipboard.writeText(t.text);
+      await navigator.clipboard.writeText(shown.trim() || t.text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -86,7 +133,8 @@ export function SavedTexts() {
   };
 
   const download = (t: SavedText) => {
-    const file = new File([t.text + "\n"], textFileName(t.text, new Date(t.createdAt)), { type: "text/plain" });
+    const body = shown.trim() || t.text;
+    const file = new File([body + "\n"], textFileName(body, new Date(t.createdAt)), { type: "text/plain" });
     const url = URL.createObjectURL(file);
     const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
     a.click();
@@ -101,8 +149,10 @@ export function SavedTexts() {
 
   const remove = async (t: SavedText) => {
     if (!window.confirm("Delete this text? It can't be brought back.")) return;
+    if (pending.current) clearTimeout(pending.current.timer);
+    pending.current = null;
     setTexts((all) => all.filter((x) => x.id !== t.id));
-    setSelected(null);
+    open(null);
     await fetch(`/api/extract/texts/${t.id}`, { method: "DELETE" }).catch(() => {});
     void load();
   };
@@ -127,7 +177,7 @@ export function SavedTexts() {
               <li key={t.id} className="border-b border-line last:border-0">
                 <button
                   type="button"
-                  onClick={() => setSelected(t.id)}
+                  onClick={() => open(t.id)}
                   aria-current={t.id === selected ? "true" : undefined}
                   className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${t.id === selected ? "bg-accent/10" : "active:bg-line/50"} ${t.doneAt ? "opacity-55" : ""}`}
                 >
@@ -143,21 +193,35 @@ export function SavedTexts() {
 
           {text && (
             <section aria-label="Selected text" className="flex flex-col gap-3">
-              <button type="button" onClick={() => setSelected(null)} className="self-start text-sm font-medium text-accent md:hidden">
+              <button type="button" onClick={() => open(null)} className="self-start text-sm font-medium text-accent md:hidden">
                 ← All texts
               </button>
               <p className="text-sm text-muted">
                 {when(text.createdAt)}
                 {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
                 {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
+                {text.editedOnComputerAt && " · corrected on the computer"}
                 {text.doneAt && " · ✓ done"}
               </p>
-              <div
+              <textarea
                 aria-label="Text"
-                className="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-surface p-4 text-base leading-relaxed select-text md:text-lg"
-              >
-                {text.text}
-              </div>
+                value={shown}
+                onChange={(e) => edit(text, e.target.value)}
+                onBlur={flush}
+                lang="fi"
+                spellCheck
+                rows={14}
+                className="min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:text-lg"
+              />
+              <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
+                {draft?.id === text.id
+                  ? draft.status === "saving"
+                    ? "Saving…"
+                    : draft.status === "saved"
+                      ? "✓ Correction saved. The phone can't change this text any more."
+                      : (draft.error ?? "Couldn't save the correction.")
+                  : "You can correct the text right here — it saves by itself."}
+              </p>
               <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
                 <button type="button" onClick={() => void copy(text)} className={`${button} bg-accent text-accent-contrast`}>
                   {copied ? "Copied ✓" : "Copy"}

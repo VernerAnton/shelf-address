@@ -350,7 +350,7 @@ export function ExtractScreen() {
             className="min-h-60 w-full rounded-xl border border-line bg-surface p-3 text-base leading-relaxed outline-none focus:border-accent"
           />
           {ai.loggedIn && save && (
-            <p role="status" aria-label="Saved for the computer" className={`-mt-1 text-sm ${save === "loggedout" ? "text-danger" : "text-muted"}`}>
+            <p role="status" aria-label="Saved for the computer" className={`-mt-1 text-sm ${save === "loggedout" || save === "editedOnComputer" ? "text-danger" : "text-muted"}`}>
               {save === "saved" ? (
                 <>
                   ✓ Saved — it&apos;s on the computer under{" "}
@@ -363,6 +363,8 @@ export function ExtractScreen() {
                 "Saving…"
               ) : save === "waiting" ? (
                 "No signal — it'll be saved for the computer by itself when there's signal."
+              ) : save === "editedOnComputer" ? (
+                "This text has been corrected on the computer, so changes here aren't saved. Make further changes there, or Start over for a new book."
               ) : (
                 "Not saved: this phone isn't logged in any more. Log in again above."
               )}

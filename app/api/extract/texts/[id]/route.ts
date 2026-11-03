@@ -1,12 +1,13 @@
 import { NO_STORE } from "@/lib/api";
 import { isLoggedIn } from "@/lib/extract-ai";
-import { deleteText, saveText, SavedTextError, setDone } from "@/lib/saved-texts";
+import { deleteText, editOnComputer, saveText, SavedTextError, setDone } from "@/lib/saved-texts";
 
 /**
  * One saved text (docs/spec-corrections.md §24). Needs the access-code login
  * (an HttpOnly, SameSite=Strict cookie, so other sites can't use it).
- *   PUT     { text, source, createdAt, updatedAt } from the phone — new or newer
- *   PATCH   { done } from the computer
+ *   PUT     { text, source, createdAt, updatedAt } from the phone — new or newer;
+ *           { result: "editedOnComputer" } once the computer has corrected it
+ *   PATCH   { done } and/or { text } (a correction) from the computer
  *   DELETE
  */
 async function handle(request: Request, act: () => Promise<Response>): Promise<Response> {
@@ -31,13 +32,15 @@ async function json(request: Request): Promise<Record<string, unknown>> {
 
 export async function PUT(request: Request, ctx: RouteContext<"/api/extract/texts/[id]">) {
   const { id } = await ctx.params;
-  return handle(request, async () => Response.json({ saved: await saveText(id, await json(request)) }, { headers: NO_STORE }));
+  return handle(request, async () => Response.json({ result: await saveText(id, await json(request)) }, { headers: NO_STORE }));
 }
 
 export async function PATCH(request: Request, ctx: RouteContext<"/api/extract/texts/[id]">) {
   const { id } = await ctx.params;
   return handle(request, async () => {
-    await setDone(id, (await json(request)).done === true);
+    const body = await json(request);
+    if ("text" in body) await editOnComputer(id, body.text);
+    if ("done" in body) await setDone(id, body.done === true);
     return Response.json({ ok: true }, { headers: NO_STORE });
   });
 }

@@ -68,12 +68,12 @@ const t = suite();
   const list = pc.getByRole("list", { name: "Saved texts" });
   check("computer: appears without reloading", await visible(list.getByRole("button", { name: /Väinö Linnan romaani/ }), 15000));
   const shown = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
-  check("computer: newest opened straight away, in full", await visible(shown) && (await shown.innerText()).trim() === AI_TEXT);
+  check("computer: newest opened straight away, in full", await visible(shown) && (await shown.inputValue()).trim() === AI_TEXT);
 
   // A correction on the phone follows.
   await box.fill(AI_TEXT.replace("miljoona", "kaksi miljoonaa"));
   check("phone: correction saved", await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/Saved — it's on the computer/), 15000));
-  check("computer: the correction shows up", await pc.waitForFunction(() => /kaksi miljoonaa/.test(document.querySelector("[aria-label='Selected text'] [aria-label='Text']")?.textContent ?? ""), null, { timeout: 15000 }).then(() => true, () => false));
+  check("computer: the correction shows up", await pc.waitForFunction(() => /kaksi miljoonaa/.test(document.querySelector("[aria-label='Selected text'] [aria-label='Text']")?.value ?? ""), null, { timeout: 15000 }).then(() => true, () => false));
   check("still one text, not two", rows().length === 1);
 
   // Start over: a new text, newest first.
@@ -98,6 +98,32 @@ const t = suite();
   check("Download gives a .txt named after the first words", /^vaino-linnan-romaani-kertoo-.*\.txt$/.test(file.suggestedFilename()), file.suggestedFilename());
   const content = require("fs").readFileSync(await file.path(), "utf8");
   check("…holding the text", content.includes("kaksi miljoonaa") && content.includes("Väinö"));
+
+  // Correcting on the computer.
+  const editBox = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
+  await editBox.fill((await editBox.inputValue()).replace("Väinö Linnan romaani", "Väinö Linnan rakastettu romaani"));
+  check("computer: correction saves by itself", await visible(pc.getByRole("status", { name: "Correction" }).getByText(/Correction saved/), 10000));
+  const corrected = rows().find((r) => r.text.includes("rakastettu"));
+  check("…stored, marked as corrected on the computer", corrected && sql(`SELECT edited_on_computer_at FROM saved_texts WHERE id = '${corrected.id}'`)[0].edited_on_computer_at, JSON.stringify(rows()));
+  await pc.waitForTimeout(6000); // a refresh or two
+  check("…and the refresh doesn't undo it", (await editBox.inputValue()).includes("rakastettu"));
+  await pc.getByRole("button", { name: "Copy" }).click();
+  check("Copy copies the corrected text", (await pc.evaluate(() => navigator.clipboard.readText())).includes("rakastettu"));
+  await editBox.fill("   ");
+  check("emptying it is refused (Delete is for that)", await visible(pc.getByRole("status", { name: "Correction" }).getByText(/can't be empty/), 10000));
+  check("…and the text is kept", rows().some((r) => r.text.includes("rakastettu")));
+  await editBox.fill(corrected.text);
+  await visible(pc.getByRole("status", { name: "Correction" }).getByText(/Correction saved/), 10000);
+
+  // The phone's current text corrected on the computer, then the phone types: the computer's version stays.
+  await list.getByRole("button").first().click();
+  await editBox.fill((await editBox.inputValue()) + "\n\nKoneella lisätty lause.");
+  await visible(pc.getByRole("status", { name: "Correction" }).getByText(/Correction saved/), 10000);
+  await box.fill((await box.inputValue()) + " Puhelimella lisätty.");
+  check("phone: says it's been corrected on the computer, not saved here", await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/corrected on the computer, so changes here aren't saved/), 15000));
+  await sleep(1000);
+  check("…and the computer's version is kept", rows().some((r) => r.text.includes("Koneella lisätty")) && !rows().some((r) => r.text.includes("Puhelimella lisätty")));
+  await list.getByRole("button").last().click();
 
   // Done, not done, delete.
   await pc.getByRole("button", { name: "Mark done" }).click();

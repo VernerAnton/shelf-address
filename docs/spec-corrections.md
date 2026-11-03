@@ -550,3 +550,16 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   (`/evaluate`); the launch check in `app/layout.tsx` sends a computer's
   launch on to Saved texts, as it sends a phone's old `/scan` launch to
   Evaluate.
+
+## 26. Saved texts can be corrected on the computer.
+
+**Adds to:** §24. Correcting on a computer is much easier than on a phone.
+
+- On Saved texts the text is an editable box; corrections save by
+  themselves (0.8 s after typing pauses, or when the box is left), and Copy
+  and Download give the corrected text. The list's self-refresh never
+  overwrites what's being typed.
+- Once a text is corrected on the computer, the computer's version wins:
+  the phone's later saves of it are refused (`edited_on_computer_at`,
+  migration 0011), and the phone says "corrected on the computer, so changes
+  here aren't saved". A text can't be emptied here — Delete is for that.

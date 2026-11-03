@@ -28,12 +28,24 @@ everything outside the pushed repository — scratch folders included. Test
 suites and their fixtures once lived in a scratch folder and were lost that
 way. So:
 
-- **Tests live in `e2e/`** (see `e2e/README.md`). Before deploying, run the
-  suites that cover what changed (`bash e2e/run.sh e2e-x.cjs …`, a few
-  minutes). The full run (`bash e2e/run.sh`, about half an hour: the
-  text-reading suites are slow) is for bigger changes and anything touching
-  shared code (layout, service worker, scanner, database). New features get a suite or checks
+- **Tests live in `e2e/`** (see `e2e/README.md`). The full run
+  (`bash e2e/run.sh`) takes about half an hour — the text-reading suites are
+  slow. New features get a suite or checks
   there, committed with the feature. Never keep tests, fixtures or helper
   scripts only in a scratch folder.
 - **Database backups go to R2**: `bash scripts/backup-db.sh` before every
   migration. Never rely on a backup file in a local folder.
+
+## Shipping: small changes go straight through
+
+The owner's standard (agreed in conversation): don't make them wait for the
+full test run on a small change.
+
+- **Small change** (wording, layout, a button, a redirect — no database
+  change): typecheck, lint and unit tests, build, bump `APP_VERSION`, commit,
+  push and deploy straight away (`npx opennextjs-cloudflare deploy` deploys
+  the build just made, without rebuilding). Then run the full e2e suite in
+  the background; if something fails, fix it and ship the fix the same way.
+- **Bigger change, or anything that changes the database:** run the full
+  suite first, back up to R2 (`bash scripts/backup-db.sh`), and get the
+  owner's go-ahead before migrating and deploying.

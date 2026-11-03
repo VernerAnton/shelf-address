@@ -28,8 +28,11 @@ everything outside the pushed repository — scratch folders included. Test
 suites and their fixtures once lived in a scratch folder and were lost that
 way. So:
 
-- **Tests live in `e2e/`** (see `e2e/README.md`); run them with
-  `bash e2e/run.sh` before deploying. New features get a suite or checks
+- **Tests live in `e2e/`** (see `e2e/README.md`). Before deploying, run the
+  suites that cover what changed (`bash e2e/run.sh e2e-x.cjs …`, a few
+  minutes). The full run (`bash e2e/run.sh`, about half an hour: the
+  text-reading suites are slow) is for bigger changes and anything touching
+  shared code (layout, service worker, scanner, database). New features get a suite or checks
   there, committed with the feature. Never keep tests, fixtures or helper
   scripts only in a scratch folder.
 - **Database backups go to R2**: `bash scripts/backup-db.sh` before every

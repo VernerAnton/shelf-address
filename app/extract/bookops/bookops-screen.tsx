@@ -458,7 +458,7 @@ export function BookOpsScreen() {
                     disabled={locked}
                     inputMode="numeric"
                     autoComplete="off"
-                    className={`${input} h-9 w-44 border-line`}
+                    className="h-9 w-44 min-w-0 rounded-lg border border-line bg-surface px-3 text-sm outline-none focus:border-accent disabled:opacity-70"
                   />
                 </div>
               )}

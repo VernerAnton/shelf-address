@@ -563,3 +563,78 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   the phone's later saves of it are refused (`edited_on_computer_at`,
   migration 0011), and the phone says "corrected on the computer, so changes
   here aren't saved". A text can't be emptied here — Delete is for that.
+
+## 27. BookOps: photograph a book, price it while it's filled in.
+
+**Adds to:** §22 (the bottom rows), §23 (AI reading), §24 (the access code).
+First version, to try the way of working before any equipment is bought.
+
+- **Where:** the Extract tab has its own row above the main tabs, like
+  Sections has: **BookOps** on the left, **Text Extract** on the right.
+  Tapping the Extract tab opens Text Extract exactly as before (the camera on
+  a phone, Saved texts on a computer; a computer still opens on Saved texts,
+  §25). Saved texts counts as Text Extract. Nothing else in the app changed.
+- **BookOps on a computer** (`/extract/bookops`), one screen: the queue on the
+  left, the book in the middle, the camera on the right.
+  - **Camera:** the computer's camera (a webcam on a stand, later; a laptop's
+    own, for now), started when the screen opens, at the largest size it
+    gives. Two pictures per book: front cover, then back. **Space** takes the
+    picture, unless something is being typed. After the back cover the camera
+    is ready for the next book at once — it never waits for the reading. A
+    camera picker shows when there are several; "Use photo files" takes the
+    pictures from files instead.
+  - **ISBN:** from the barcode in the back photo, read in the browser
+    (`@zxing/library`, as the scanner does for photos). No barcode: the AI
+    reads the printed ISBN, and it's used only if its check digit is right
+    (`lib/isbn-text.ts`) — a misread number is dropped, never guessed. It can
+    also be typed on the book. The ISBN box at the top adds a book by ISBN
+    alone (typed, or a hand-held reader).
+  - **Title, author, publisher, year:** from the book databases by ISBN
+    (Finna → Google Books → Open Library, the same chain as the catalog's,
+    without touching the catalog). Only if there's no ISBN, or no database
+    knows it, are title and author the AI's reading of the cover — marked
+    "AI read it · check".
+  - **Description:** the back-cover text, transcribed by the AI (the same
+    model, key and spending cap as Extract; `lib/bookops-ai.ts` asks for the
+    text, the ISBN, the title and the author in one go, both photos).
+  - **Every field says where its text came from** (Finna, AI, Yours), and
+    fills itself in only while nobody has typed in it: what the person typed
+    is never overwritten, the AI's reading gives way to a database, a
+    database's answer stays (`mayFill`, `lib/bookops-model.ts`).
+  - **Price and condition are the person's.** No price is suggested. Four
+    plain links open, each in its own tab, the search of Antikvaari.fi (used:
+    what others ask), Adlibris, Suomalainen and Akateeminen (new: price and
+    whether it's in stock), with the ISBN filled in — or title and author for
+    a book without one (`lib/price-sites.ts`). Condition is K1–K5, one click.
+    Copies and location are typed (location is free text for now, not the
+    places tree).
+  - Everything saves by itself. The list refreshes every 3 s, so a field
+    filled in, or a book sent from a phone, appears without reloading — and
+    never moves what's being typed.
+- **Send to web store** needs a title, a price and a condition, and lists the
+  book exactly as it stands; it then moves to Listed, locked, and "Take back
+  to change it" makes it a draft again. **The connection is a stand-in for
+  now** (`lib/bookops-store.ts`): it behaves like a real one — takes a
+  moment, answers with a reference — but nothing leaves the app, and the
+  screen says "test connection". The real connection replaces those two
+  functions; nothing else changes.
+- **BookOps on a phone:** the phone as the camera. Two buttons (front cover,
+  back cover) open the phone's own camera app; once both are taken the book
+  is sent, and appears in BookOps on the computer within seconds. Kept
+  simple: the pricing is done on the computer.
+- **Behind the access code**, like Saved texts — the pages, the photos and
+  the API (`/api/extract/bookops/…`, so the existing login cookie covers it).
+- **Stored apart from the catalog:** its own table (`bookops_books`,
+  migration 0012) and its own photos in R2 (`bookops/…`); the catalog's
+  editions, copies and places aren't read or written. Books stay until
+  deleted (Delete removes the photos too).
+- **The filling-in** (`processBook`, `lib/bookops.ts`) runs after the book is
+  stored: the lookup and the AI side by side, then the lookup again if the
+  AI is what found the ISBN. Whichever screen added the book starts it; any
+  BookOps screen that sees a book still waiting gives it another push every
+  20 s, and a claim in the database keeps that to one at a time. A reading
+  that failed (no signal to the AI, the spending limit) says why, with "try
+  again".
+- **Not yet:** cropping and straightening the front photo (waits for the
+  stand, where the book's place is fixed); a live "barcode visible" sign;
+  the real web store connection.

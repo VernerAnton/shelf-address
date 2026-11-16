@@ -20,6 +20,10 @@ photographed; the app finds the book's edges and straightens the picture.
 Review mode checks a shelf against what's logged there: scan everything on
 it, and the app adds what's new and lists what's missing. The Evaluate tab
 scans a book and opens its Antikvaari.fi search, to see what it sells for.
+The Extract tab reads a back cover's text for the computer (Text Extract), and
+holds BookOps: photograph a book's front and back, and it's filled in — ISBN,
+title, author, back-cover text — while it's priced by hand
+([`docs/spec-corrections.md`](docs/spec-corrections.md) §27).
 
 ## Stack
 

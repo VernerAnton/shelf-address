@@ -3,7 +3,7 @@
 Real (headless) Chromium against the app running locally (`wrangler dev`),
 with a fresh local database per suite and a stand-in for the outside services
 (`mock-books.cjs`: the book lookups, answering from `lib/lookup/__fixtures__`,
-and OpenRouter for Extract's AI). Nothing touches production or the real
+and OpenRouter for Extract's and BookOps' AI). Nothing touches production or the real
 Finna / Google Books / Open Library / Antikvaari / OpenRouter, and nothing is
 spent. The local app gets the access code `test-code`.
 
@@ -36,6 +36,7 @@ bash e2e/serve.sh places             # just start it, to poke at by hand (stop: 
 | e2e-extract | Extract: reading on the phone, tidying, sharing, copying |
 | e2e-extract-ai | Extract's AI reading: access code, OpenRouter (stand-in), phone fallback |
 | e2e-saved-texts | Saved texts: phone to computer, corrections on either, Copy/Download/Done/Delete, offline, layouts |
+| e2e-bookops | BookOps: the Extract tab's two options, camera (Space), barcode, databases and AI filling in, typed text kept, price check links, web store (stand-in), phone as the camera |
 | e2e-nav | the bottom rows |
 | e2e-launch | installed app opening on Evaluate |
 | e2e-update | update prompt, service worker, offline pages |

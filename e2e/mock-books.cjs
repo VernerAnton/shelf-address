@@ -10,6 +10,9 @@
 // tests never reach the real AI or spend anything:
 //   POST /__ai?mode=ok|limit|badkey|slow   how it answers next (default ok)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
+// BookOps asks the same stand-in (x-title "Shelf-Address BookOps") and gets JSON back:
+//   POST /__ai?book=plain|isbn|badisbn|garbage   what it "reads" next (default plain:
+//                                                title, author, back-cover text, no ISBN)
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
@@ -51,7 +54,16 @@ const log = [];
 const AI_KEY = "test-openrouter-key";
 const AI_TEXT = "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.";
 let aiMode = "ok";
+let aiBook = "plain";
 const aiRequests = [];
+// What the stand-in "reads" off a BookOps book's photos.
+const BOOKOPS = {
+  plain: { title: "Tuntematon sotilas", author: "Väinö Linna", isbn: null, description: AI_TEXT },
+  // An ISBN the stand-in Finna knows (Pääkallokehrääjä): the lookup then replaces the AI's title.
+  isbn: { title: "Paakallokehraaja (AI)", author: "Remes", isbn: "ISBN 951-0-23076-6", description: AI_TEXT },
+  // One digit misread: fails the check digit, so it must be dropped.
+  badisbn: { title: "Kotimaan linnut", author: null, isbn: "978-951-0-23076-4", description: AI_TEXT },
+};
 
 function readBody(req) {
   return new Promise((resolve) => {
@@ -84,10 +96,15 @@ async function chat(req, res) {
     imageBytes: jpeg.length,
     width,
     height,
+    images: content.filter((c) => c.type === "image_url").length,
   });
   if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
   if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
+  if (req.headers["x-title"] === "Shelf-Address BookOps") {
+    const answer = aiBook === "garbage" ? "Sorry, I can't make out these photos." : "```json\n" + JSON.stringify(BOOKOPS[aiBook] ?? BOOKOPS.plain) + "\n```";
+    return json(res, 200, { choices: [{ message: { role: "assistant", content: answer } }] });
+  }
   json(res, 200, { choices: [{ message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }] });
 }
 
@@ -102,8 +119,11 @@ http
     }
     if (p === "/__log") return json(res, 200, log);
     if (p === "/__ai") {
-      if (req.method === "POST") aiMode = url.searchParams.get("mode") || "ok";
-      return json(res, 200, { mode: aiMode, requests: aiRequests });
+      if (req.method === "POST") {
+        if (url.searchParams.has("book")) aiBook = url.searchParams.get("book");
+        else aiMode = url.searchParams.get("mode") || "ok";
+      }
+      return json(res, 200, { mode: aiMode, book: aiBook, requests: aiRequests });
     }
     if (p === "/api/v1/chat/completions" && req.method === "POST") return void chat(req, res);
     log.push(p + url.search);

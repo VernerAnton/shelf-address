@@ -94,7 +94,11 @@ const t = suite();
   check("…nor a photo", (await pc.request.get("/api/extract/bookops/photos/x-front-1.jpg")).status() === 401);
   check("…nor a book added", (await pc.request.post("/api/extract/bookops/books", { multipart: { id: "12345678", isbn: "9789510230763", isbnSource: "typed" } })).status() === 401 && rows().length === 0);
   await logIn(pc);
-  const camera = pc.getByRole("region", { name: "Camera" });
+  // The computer's own camera is off unless chosen: the phone takes the photos.
+  const fromPhone = pc.getByRole("region", { name: "Photos from the phone" });
+  check("computer: the camera is off by default, photos come from the phone", await visible(fromPhone.getByText(/Taken on the phone/)) && (await pc.getByRole("region", { name: "Camera", exact: true }).count()) === 0 && (await pc.locator("video").count()) === 0);
+  await fromPhone.getByRole("button", { name: "Use the computer's camera" }).click();
+  const camera = pc.getByRole("region", { name: "Camera", exact: true });
   const queue = pc.locator("[aria-label='Queue']");
   const bookBox = pc.getByRole("region", { name: "Book", exact: true });
   const lastBook = pc.getByRole("status", { name: "Last book" });
@@ -307,11 +311,33 @@ const t = suite();
   check("…without taking the open book away", (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === openTitle);
   check("…tagged as the same ISBN as the other copy", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n >= 2)));
 
+  // Photos on the phone: the scanned listing is under "Needs photos"; front, then back.
+  const needsPhotos = page.getByRole("region", { name: "Needs photos" });
+  check("phone: right after a scan, 'Add photos now'", await visible(phoneList.getByRole("button", { name: "Add photos now" }), 15000));
+  const needRow = needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8.*Front and back cover/s });
+  check("phone: the scanned listing is under Needs photos, front and back", await visible(needRow, 15000));
+  await needRow.click();
+  const taking = page.getByRole("region", { name: "Taking photos" });
+  check("tap: photos for that listing, the scanner paused", await visible(taking.getByText(/Photos for:/)) && await visible(page.getByRole("button", { name: "Scan with camera" })));
+  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Kansi"], "#2f5d7c"));
+  check("front taken: now the back", await visible(taking.getByRole("button", { name: /Front cover ✓/ })) && await visible(taking.getByRole("button", { name: /Now the back cover/ })) && !rows().find((r) => r.id === fresh.id).front_photo);
+  await ai("book=plain");
+  await page.getByLabel("Back cover photo", { exact: true }).setInputFiles(await cover(page, ["Takakansi."], "#efe6d2"));
+  check("back taken: both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
+  book = await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.ai_status === "done" ? r : null; });
+  check("…the AI read them: text filled in, its title too (no database knew it)", book && book.description === AI_TEXT && book.title === "Tuntematon sotilas" && book.title_source === "ai" && rows().length === before + 1, JSON.stringify(book));
+  await sleep(4000);
+  check("…the scanner, back on and still seeing that book, doesn't add it again", rows().length === before + 1, String(rows().length - before));
+  check("…and it's off the Needs photos list", await until(async () => (await needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8/ }).count()) === 0));
+  await pc.getByRole("region", { name: "To do" }).getByRole("button", { name: /Tuntematon sotilas/ }).first().click();
+  check("computer: the phone's photos and text show on the listing", await until(async () => (await bookBox.getByLabel("Description").inputValue()) === AI_TEXT) && await until(() => photos.locator("img").count().then((n) => n === 2)));
+
   // No barcode: the back cover photographed on the phone is the book, and its back cover.
   await ai("book=isbn");
-  await page.getByLabel("Back cover photo").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
+  await page.getByLabel("Back cover photo, no barcode").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
   check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 30000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/)));
   book = await until(() => { const r = rows().at(-1); return rows().length === before + 2 && r.ai_status === "done" && r.lookup_status === "found" ? r : null; });
+  check("phone: that listing is under Needs photos, front still needed", await visible(page.getByRole("region", { name: "Needs photos" }).getByRole("button", { name: /Pääkallokehrääjä.*Front cover still needed/s }), 15000));
   check("…stored: the photo as the back cover, ISBN read by the AI (10 digits, made 13), title from the database", book && book.back_photo && !book.front_photo && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.title_source === "finna" && book.description_source === "ai", JSON.stringify(book));
   await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 2})` }), 15000);
   await pc.getByRole("region", { name: "To do" }).getByRole("button").first().click();
@@ -327,7 +353,7 @@ const t = suite();
   const idle = await pcCtx.newPage();
   await idle.clock.install();
   await idle.goto("/extract/bookops");
-  const idleCamera = idle.getByRole("region", { name: "Camera" });
+  const idleCamera = idle.getByRole("region", { name: "Camera", exact: true });
   await visible(idleCamera.getByText("LIVE"));
   await idle.clock.fastForward("09:00");
   check("still live after 9 minutes", await visible(idleCamera.getByText("LIVE"), 3000));

@@ -649,6 +649,22 @@ First version, to try the way of working before any equipment is bought.
   the databases give the title, and the photo is kept as its back cover, so
   it isn't taken again on the computer. A hand-held reader later types into
   the computer's ISBN box instead; nothing else changes.
+- **Photos on the phone** (V31) — the way photos are meant to be taken now;
+  phones have better cameras and focus than webcams. Under the scanner,
+  **Needs photos** lists every listing still to do that lacks its front or
+  back photo (scanned on the phone, typed on the computer, or from a
+  hand-held reader); right after a scan the listing also offers **Add photos
+  now**. Tapping one opens the phone's own camera app for the front cover,
+  then the back (only the sides it lacks); both go to that listing together,
+  and the AI reads the back-cover text — while the price and the rest are
+  set on the computer. The scanner pauses while photos are taken, and for
+  15 s after they're sent it ignores that book's barcode, so the book still
+  in hand isn't added again.
+- **The computer's camera is off by default** (V31): the camera column is
+  replaced by a note on where the photos come from, and "Use the computer's
+  camera" brings it back (remembered on that computer). Each listing shows
+  its two photo slots, "Waiting for the photo from the phone" until they
+  arrive.
 - **Photos for a book already in the queue** (V28): when the open book lacks
   photos (scanned, or only its back photographed on a phone), the camera
   says "Photos for: <title>" and takes only the sides it lacks; they're added

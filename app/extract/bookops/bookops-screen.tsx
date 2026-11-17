@@ -28,6 +28,16 @@ const SAVE_AFTER_MS = 800;
 /** A book still waiting to be read is given another push this often (the server makes sure only one does the work). */
 const NUDGE_EVERY_MS = 20_000;
 
+/** The computer's own camera: off unless chosen (the phone takes the photos); remembered on this computer. */
+const WEBCAM_KEY = "bookops:webcam";
+function storedWebcam(): boolean {
+  try {
+    return localStorage.getItem(WEBCAM_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 /** The fields typed at the desk, as text. */
 type Field = "title" | "author" | "publisher" | "year" | "description" | "location" | "price" | "quantity" | "isbn";
 type Typed = Partial<Record<Field, string>>;
@@ -85,6 +95,17 @@ export function BookOpsScreen() {
   const [busy, setBusy] = useState<"send" | "back" | null>(null);
   const [isbn, setIsbn] = useState("");
   const [isbnNote, setIsbnNote] = useState<string | null>(null);
+  const [webcam, setWebcamState] = useState(false);
+  const setWebcam = (on: boolean) => setWebcamState(on);
+  const chooseWebcam = (on: boolean) => {
+    setWebcamState(on);
+    try {
+      if (on) localStorage.setItem(WEBCAM_KEY, "1");
+      else localStorage.removeItem(WEBCAM_KEY);
+    } catch {
+      // Not remembered, that's all.
+    }
+  };
 
   const selectedRef = useRef<string | null>(null);
   const typedRef = useRef<Typed>({});
@@ -129,7 +150,10 @@ export function BookOpsScreen() {
   }, [nudge]);
 
   useEffect(() => {
-    const first = setTimeout(() => void load(), 0);
+    const first = setTimeout(() => {
+      setWebcam(storedWebcam());
+      void load();
+    }, 0);
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, REFRESH_MS);
@@ -681,8 +705,26 @@ export function BookOpsScreen() {
         )}
 
         <aside className="flex flex-col gap-5">
-          <BookOpsCamera target={target} onShots={(shots) => void onShots(shots)} notice={notice} />
-          {book && (book.frontPhoto || book.backPhoto) && (
+          {webcam ? (
+            <>
+              <BookOpsCamera target={target} onShots={(shots) => void onShots(shots)} notice={notice} />
+              <button type="button" onClick={() => chooseWebcam(false)} className="self-start text-sm font-medium text-accent underline-offset-2 hover:underline">
+                Hide the computer&apos;s camera
+              </button>
+            </>
+          ) : (
+            <section aria-label="Photos from the phone" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-sm">
+              <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Photos</h2>
+              <p>
+                Taken on the phone: <strong>Extract → BookOps</strong>, then <strong>Needs photos</strong>. They appear here by
+                themselves, and the AI reads the back-cover text.
+              </p>
+              <button type="button" onClick={() => chooseWebcam(true)} className="self-start font-medium text-accent underline-offset-2 hover:underline">
+                Use the computer&apos;s camera
+              </button>
+            </section>
+          )}
+          {book && (
             <section aria-label="Photos of this book" className="flex flex-col gap-2 border-t border-line pt-4">
               <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Photos of this book</h2>
               <div className="grid grid-cols-2 gap-3">
@@ -695,10 +737,17 @@ export function BookOpsScreen() {
                   src ? (
                     <a key={caption} href={src} target="_blank" rel="noreferrer" className="flex flex-col gap-1.5 text-xs text-muted">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={src} alt="" className="aspect-[4/3] w-full rounded-md bg-line/70 object-contain" />
+                      <img src={src} alt="" className="aspect-[3/4] w-full rounded-md bg-line/70 object-contain" />
                       {caption}
                     </a>
-                  ) : null,
+                  ) : (
+                    <div key={caption} className="flex flex-col gap-1.5 text-xs text-muted">
+                      <span className="flex aspect-[3/4] w-full items-center justify-center rounded-md border border-dashed border-line p-2 text-center">
+                        {book.status === "draft" ? "Waiting for the photo from the phone" : "No photo"}
+                      </span>
+                      {caption}
+                    </div>
+                  ),
                 )}
               </div>
             </section>

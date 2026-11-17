@@ -55,7 +55,8 @@ type Shooting = {
 
 const SIDE_NAME: Record<Side, string> = { front: "Front cover", back: "Back cover" };
 const nameOf = (b: Pick<BookOpsBook, "title" | "isbn13">) => b.title?.trim() || (b.isbn13 ? `ISBN ${formatIsbn(b.isbn13)}` : "Untitled book");
-const missing = (b: BookOpsBook): Side[] => [...(b.frontPhoto ? [] : (["front"] as const)), ...(b.backPhoto ? [] : (["back"] as const))];
+/** The sides a listing lacks, back cover first: that is where the barcode is, so it is already facing up after scanning. */
+const missing = (b: BookOpsBook): Side[] => [...(b.backPhoto ? [] : (["back"] as const)), ...(b.frontPhoto ? [] : (["front"] as const))];
 
 /**
  * BookOps on a phone (docs/spec-corrections.md §27): the phone does what the
@@ -416,7 +417,7 @@ export function BookOpsPhone() {
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-medium">{nameOf(b)}</span>
-                      <span className="block text-xs text-muted">{lack.length === 2 ? "Front and back cover" : `${SIDE_NAME[lack[0]]} still needed`}</span>
+                      <span className="block text-xs text-muted">{lack.length === 2 ? "Back and front cover" : `${SIDE_NAME[lack[0]]} still needed`}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1.5 text-sm font-medium text-accent">
                       <CameraIcon className="size-5" />

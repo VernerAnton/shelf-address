@@ -654,8 +654,10 @@ First version, to try the way of working before any equipment is bought.
   **Needs photos** lists every listing still to do that lacks its front or
   back photo (scanned on the phone, typed on the computer, or from a
   hand-held reader); right after a scan the listing also offers **Add photos
-  now**. Tapping one opens the phone's own camera app for the front cover,
-  then the back (only the sides it lacks); both go to that listing together,
+  now**. Tapping one opens the phone's own camera app for the back cover
+  (where the barcode is, so it's already facing up), then the front (only
+  the sides it lacks; back first everywhere since V32, the computer's camera
+  too); both go to that listing together,
   and the AI reads the back-cover text — while the price and the rest are
   set on the computer. The scanner pauses while photos are taken, and for
   15 s after they're sent it ignores that book's barcode, so the book still

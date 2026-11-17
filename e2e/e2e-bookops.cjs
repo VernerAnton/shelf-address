@@ -1,6 +1,6 @@
 // seed: none
 // BookOps (spec-corrections §27): the Extract tab's two options; on a computer,
-// one screen — queue, book, camera. Front and back cover photographed (Space),
+// one screen — queue, book, camera. Back and front cover photographed (Space),
 // ISBN from the barcode, title and author from the book databases, back-cover
 // text from the AI (stand-ins here), each field saying where its text came
 // from and none overwriting what was typed; price and condition by hand; four
@@ -70,8 +70,11 @@ const t = suite();
     const m = document.querySelector("nav[aria-label=Main]").getBoundingClientRect();
     return s.bottom <= m.top + 1 && m.top - s.bottom < 4 && s.height >= 44;
   }));
-  await sub.getByRole("link", { name: "BookOps" }).click();
-  await page.waitForURL(/\/extract\/bookops$/);
+  // Tapped again if the first tap is lost (it can land while the page is still starting up).
+  for (let i = 0; i < 3 && !/\/extract\/bookops$/.test(page.url()); i++) {
+    await sub.getByRole("link", { name: "BookOps" }).click();
+    await page.waitForURL(/\/extract\/bookops$/, { timeout: 10000 }).catch(() => {});
+  }
   check("phone: BookOps opens from the row, marked", await visible(page.getByRole("heading", { name: "BookOps" })) && (await current(sub)) === "BookOps" && (await current(main)) === "Extract");
   await page.goto("/extract/saved");
   check("Saved texts counts as Text Extract", (await current(sub)) === "Text Extract");
@@ -116,7 +119,7 @@ const t = suite();
   await pc.getByRole("heading", { name: "BookOps" }).click();
   await pc.keyboard.press("Space");
   await sleep(600);
-  check("…Space takes nothing", /Step 1 Front cover/.test(await camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " "))));
+  check("…Space takes nothing", /Step 1 Back cover/.test(await camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " "))));
   await pc.reload();
   check("stopped stays stopped when BookOps is opened again", await visible(camera.getByRole("button", { name: "Start camera" })) && !(await cameraOn()));
   await camera.getByRole("button", { name: "Start camera" }).click();
@@ -153,16 +156,16 @@ const t = suite();
   await isbnBox.click();
   await pc.keyboard.press("Space");
   await sleep(700);
-  check("Space while typing takes no picture", /Step 1 Front cover/.test(await step()) && (await isbnBox.inputValue()) === " ", await step());
+  check("Space while typing takes no picture", /Step 1 Back cover/.test(await step()) && (await isbnBox.inputValue()) === " ", await step());
   await isbnBox.fill("");
   await pc.getByRole("heading", { name: "BookOps" }).click();
   await pc.keyboard.press("Space");
-  check("Space: front cover taken, now the back", await until(async () => /Step 2 Back cover/.test(await step())), await step());
+  check("Space: back cover first (the barcode side), now the front", await until(async () => /Step 2 Front cover/.test(await step())), await step());
   check("…the photos can be retaken", await visible(camera.getByRole("button", { name: "Retake" })));
   check("nothing stored yet", rows().length === 0);
   await pc.keyboard.press("Space");
   check("Space again: the book is added, ISBN from the barcode", await visible(lastBook.getByText(/Added to the queue\. ISBN 978-951036686-8 read from the barcode/), 30000));
-  check("the camera is ready for the next book at once", /Step 1 Front cover/.test(await step()));
+  check("the camera is ready for the next book at once", /Step 1 Back cover/.test(await step()));
   let book = await until(() => { const r = rows()[0]; return r && r.ai_status !== "pending" && r.lookup_status !== "pending" ? r : null; });
   check("stored: ISBN from the barcode, both photos", book && book.isbn13 === "9789510366868" && book.isbn_source === "barcode" && /^bookops\/.+-front-\d+\.jpg$/.test(book.front_photo) && /^bookops\/.+-back-\d+\.jpg$/.test(book.back_photo), JSON.stringify(book));
   const asked = (await ai()).requests.at(-1);
@@ -314,16 +317,16 @@ const t = suite();
   // Photos on the phone: the scanned listing is under "Needs photos"; front, then back.
   const needsPhotos = page.getByRole("region", { name: "Needs photos" });
   check("phone: right after a scan, 'Add photos now'", await visible(phoneList.getByRole("button", { name: "Add photos now" }), 15000));
-  const needRow = needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8.*Front and back cover/s });
+  const needRow = needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8.*Back and front cover/s });
   check("phone: the scanned listing is under Needs photos, front and back", await visible(needRow, 15000));
   await needRow.click();
   const taking = page.getByRole("region", { name: "Taking photos" });
   check("tap: photos for that listing, the scanner paused", await visible(taking.getByText(/Photos for:/)) && await visible(page.getByRole("button", { name: "Scan with camera" })));
-  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Kansi"], "#2f5d7c"));
-  check("front taken: now the back", await visible(taking.getByRole("button", { name: /Front cover ✓/ })) && await visible(taking.getByRole("button", { name: /Now the back cover/ })) && !rows().find((r) => r.id === fresh.id).front_photo);
-  await ai("book=plain");
   await page.getByLabel("Back cover photo", { exact: true }).setInputFiles(await cover(page, ["Takakansi."], "#efe6d2"));
-  check("back taken: both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
+  check("back cover first (the barcode side): now the front", await visible(taking.getByRole("button", { name: /Back cover ✓/ })) && await visible(taking.getByRole("button", { name: /Now the front cover/ })) && !rows().find((r) => r.id === fresh.id).back_photo);
+  await ai("book=plain");
+  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Kansi"], "#2f5d7c"));
+  check("front taken: both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
   book = await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.ai_status === "done" ? r : null; });
   check("…the AI read them: text filled in, its title too (no database knew it)", book && book.description === AI_TEXT && book.title === "Tuntematon sotilas" && book.title_source === "ai" && rows().length === before + 1, JSON.stringify(book));
   await sleep(4000);

@@ -305,7 +305,7 @@ export function BookOpsScreen() {
       ? {
           id: book.id,
           title: book.title?.trim() || (book.isbn13 ? formatIsbn(book.isbn13) : "the open book"),
-          sides: [...(book.frontPhoto ? [] : (["front"] as const)), ...(book.backPhoto ? [] : (["back"] as const))],
+          sides: [...(book.backPhoto ? [] : (["back"] as const)), ...(book.frontPhoto ? [] : (["front"] as const))],
         }
       : null;
   const listed = books.filter((b) => b.status === "listed");
@@ -466,7 +466,7 @@ export function BookOpsScreen() {
               </ul>
             ) : (
               <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">
-                Nothing in the queue. Scan a barcode on a phone in BookOps, type an ISBN above, or photograph a book&apos;s front and back cover with the camera.
+                Nothing in the queue. Scan a barcode on a phone in BookOps, type an ISBN above, or photograph a book&apos;s back and front cover.
               </p>
             )}
           </section>
@@ -700,7 +700,7 @@ export function BookOpsScreen() {
           </section>
         ) : (
           <p className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-muted">
-            {books.length ? "Choose a book from the queue." : "Photograph a book to start: front cover, then back cover."}
+            {books.length ? "Choose a book from the queue." : "Scan a book on the phone to start, or type its ISBN above."}
           </p>
         )}
 

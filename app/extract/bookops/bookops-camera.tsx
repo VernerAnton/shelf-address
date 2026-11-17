@@ -79,7 +79,7 @@ function why(error: unknown): string {
 /**
  * BookOps' camera column (docs/spec-corrections.md §27): the computer's
  * camera — a webcam on a stand, or a laptop's own — live, and two pictures
- * per book: the front cover, then the back. Space takes the picture (when
+ * per book: the back cover (where the barcode is), then the front. Space takes the picture (when
  * nothing is being typed), so both hands can stay on the book.
  *
  * The camera never waits for the book it just photographed: after the back
@@ -265,7 +265,8 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
   /** What the pictures are for: the open book's missing sides, or a new book's two. */
   const forBook = target && newFor !== target.id ? target : null;
   const targetId = forBook?.id ?? null;
-  const sidesKey = forBook ? forBook.sides.join(",") : "front,back";
+  // Back cover first: that is where the barcode is, so it is already facing up after scanning.
+  const sidesKey = forBook ? forBook.sides.join(",") : "back,front";
   const plan = useMemo(() => ({ key: `${targetId ?? "new"}:${sidesKey}`, targetId, sides: sidesKey.split(",") as Side[] }), [targetId, sidesKey]);
 
   const keep = (next: Taken) => {
@@ -381,7 +382,7 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
               LIVE
             </span>
             <p className="pointer-events-none absolute inset-x-0 bottom-2 px-3 text-center text-sm text-white drop-shadow">
-              {nextSide === "back" ? (started ? "Now the back cover" : "Back cover up, inside the frame") : "Front cover up, inside the frame"}
+              {nextSide === "front" ? (started ? "Now the front cover" : "Front cover up, inside the frame") : "Back cover up, inside the frame"}
             </p>
             {flash && <div aria-hidden className="absolute inset-0 bg-white/70" />}
           </>

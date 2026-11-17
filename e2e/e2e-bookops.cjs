@@ -91,6 +91,23 @@ const t = suite();
   const step = () => camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " ").trim());
   check("logged in: empty queue explained", await visible(queue.getByText(/Nothing in the queue/)));
   check("the camera starts by itself", await visible(camera.getByText("LIVE")));
+
+  // Stop camera: off, stays off on the next visit, until started again.
+  const cameraOn = () => pc.evaluate(() => Boolean(document.querySelector("video[aria-label='Camera picture']")?.srcObject?.getVideoTracks().some((tr) => tr.readyState === "live")));
+  check("camera is running", await cameraOn());
+  await camera.getByRole("button", { name: "Stop camera" }).click();
+  check("Stop camera: off, the camera let go", await visible(camera.getByRole("status", { name: "Camera off" }).getByText("The camera is off.")) && !(await cameraOn()) && (await camera.getByText("LIVE").count()) === 0);
+  check("…Take picture can't be pressed, no Stop button", await camera.getByRole("button", { name: /Take picture/ }).isDisabled() && (await camera.getByRole("button", { name: "Stop camera" }).count()) === 0);
+  await pc.getByRole("heading", { name: "BookOps" }).click();
+  await pc.keyboard.press("Space");
+  await sleep(600);
+  check("…Space takes nothing", /Step 1 Front cover/.test(await camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " "))));
+  await pc.reload();
+  check("stopped stays stopped when BookOps is opened again", await visible(camera.getByRole("button", { name: "Start camera" })) && !(await cameraOn()));
+  await camera.getByRole("button", { name: "Start camera" }).click();
+  check("Start camera: live again", await visible(camera.getByText("LIVE")) && await cameraOn() && await visible(camera.getByRole("button", { name: "Stop camera" })));
+  await pc.reload();
+  check("…and starts by itself again on the next visit", await visible(camera.getByText("LIVE")));
   check("three columns: queue, book, camera", await pc.evaluate(() => {
     const q = document.querySelector("[aria-label=Queue]").getBoundingClientRect();
     const c = document.querySelector("section[aria-label=Camera]").getBoundingClientRect();
@@ -237,6 +254,18 @@ const t = suite();
   check("…without taking the open book away", (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === openTitle);
   await pc.getByRole("region", { name: "To do" }).getByRole("button").first().click();
   check("…its ISBN marked as read by the AI", await visible(bookBox.getByText(/ISBN 978-951023076-3/)) && await visible(bookBox.getByText("AI read it · check")));
+
+  // Stops by itself after 10 minutes without a picture.
+  const idle = await pcCtx.newPage();
+  await idle.clock.install();
+  await idle.goto("/extract/bookops");
+  const idleCamera = idle.getByRole("region", { name: "Camera" });
+  await visible(idleCamera.getByText("LIVE"));
+  await idle.clock.fastForward("09:00");
+  check("still live after 9 minutes", await visible(idleCamera.getByText("LIVE"), 3000));
+  await idle.clock.fastForward("01:30");
+  check("off by itself after 10 minutes without a picture, and says so", await visible(idleCamera.getByRole("status", { name: "Camera off" }).getByText(/stopped by itself after 10 minutes without a picture/)));
+  await idle.close();
 
   // The rest of the app is as it was.
   check("no other table touched", sql("SELECT (SELECT COUNT(*) FROM editions) + (SELECT COUNT(*) FROM copies) + (SELECT COUNT(*) FROM saved_texts) AS n")[0].n === 0);

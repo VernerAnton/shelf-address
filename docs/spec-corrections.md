@@ -583,6 +583,10 @@ First version, to try the way of working before any equipment is bought.
     is ready for the next book at once — it never waits for the reading. A
     camera picker shows when there are several; "Use photo files" takes the
     pictures from files instead.
+  - **Not live all the time** (V27): "Stop camera" turns the camera off (its
+    light goes out) and it stays off — also the next time BookOps is opened
+    in that browser — until "Start camera". It also stops by itself after
+    10 minutes without a picture. A front cover already taken is kept.
   - **ISBN:** from the barcode in the back photo, read in the browser
     (`@zxing/library`, as the scanner does for photos). No barcode: the AI
     reads the printed ISBN, and it's used only if its check digit is right

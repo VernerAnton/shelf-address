@@ -15,12 +15,25 @@ type Props = {
 
 type Camera = { deviceId: string; label: string };
 const CAMERA_KEY = "bookops:camera";
+/** Set while the camera has been stopped by hand: it then stays off when BookOps is opened again, until started. */
+const OFF_KEY = "bookops:camera-off";
+/** The camera stops by itself after this long without a picture. */
+export const IDLE_STOP_MS = 10 * 60 * 1000;
 
-function stored(): string | null {
+function stored(key = CAMERA_KEY): string | null {
   try {
-    return localStorage.getItem(CAMERA_KEY);
+    return localStorage.getItem(key);
   } catch {
     return null;
+  }
+}
+
+function remember(key: string, value: string | null) {
+  try {
+    if (value) localStorage.setItem(key, value);
+    else localStorage.removeItem(key);
+  } catch {
+    // Not remembered, that's all.
   }
 }
 
@@ -42,6 +55,11 @@ function why(error: unknown): string {
  *
  * The camera never waits for the book it just photographed: after the back
  * cover it's ready for the next one at once.
+ *
+ * It isn't live all the time: "Stop camera" turns it off (the camera light
+ * goes out) and it stays off — also the next time BookOps is opened in this
+ * browser — until "Start camera". It also stops by itself after
+ * IDLE_STOP_MS without a picture. A front cover already taken is kept.
  */
 export function BookOpsCamera({ onBook, notice }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -55,17 +73,35 @@ export function BookOpsCamera({ onBook, notice }: Props) {
   const [current, setCurrent] = useState<string | null>(null);
   const [front, setFront] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
+  /** Why the camera is off, when it was stopped on purpose (not an error). */
+  const [offNote, setOffNote] = useState<string | null>(null);
+  const lastUsedRef = useRef(0);
 
+  /** Lets go of the camera (its light goes out). */
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
   }, []);
+
+  /** Turned off on purpose: by the button, or after a while without a picture. */
+  const turnOff = useCallback(
+    (note: string) => {
+      stop();
+      setStatus("off");
+      setError(null);
+      setOffNote(note);
+    },
+    [stop],
+  );
 
   const start = useCallback(
     async (deviceId: string | null) => {
       stop();
       setStatus("starting");
       setError(null);
+      setOffNote(null);
+      lastUsedRef.current = Date.now();
       // As large as the camera gives: small print on a back cover needs it.
       const video = (id: string | null): MediaTrackConstraints => ({ ...(id ? { deviceId: { exact: id } } : {}), width: { ideal: 3840 }, height: { ideal: 2160 } });
       try {
@@ -96,19 +132,37 @@ export function BookOpsCamera({ onBook, notice }: Props) {
   );
 
   useEffect(() => {
-    const first = setTimeout(() => void start(stored()), 0);
+    const first = setTimeout(() => {
+      if (stored(OFF_KEY)) turnOff("The camera is off.");
+      else void start(stored());
+    }, 0);
     return () => {
       clearTimeout(first);
       stop();
     };
-  }, [start, stop]);
+  }, [start, stop, turnOff]);
+
+  // Not live all the time: off by itself after a while without a picture.
+  useEffect(() => {
+    if (status !== "live") return;
+    const timer = setInterval(() => {
+      if (Date.now() - lastUsedRef.current >= IDLE_STOP_MS) turnOff("The camera stopped by itself after 10 minutes without a picture.");
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [status, turnOff]);
+
+  const stopByHand = () => {
+    remember(OFF_KEY, "1");
+    turnOff("The camera is off.");
+  };
+
+  const startByHand = () => {
+    remember(OFF_KEY, null);
+    void start(current ?? stored());
+  };
 
   const choose = (deviceId: string) => {
-    try {
-      localStorage.setItem(CAMERA_KEY, deviceId);
-    } catch {
-      // Not remembered, that's all.
-    }
+    remember(CAMERA_KEY, deviceId);
     void start(deviceId);
   };
 
@@ -136,6 +190,7 @@ export function BookOpsCamera({ onBook, notice }: Props) {
     const canvas = frameOf(video);
     if (!canvas) return;
     busyRef.current = true;
+    lastUsedRef.current = Date.now();
     setFlash(true);
     setTimeout(() => setFlash(false), 150);
     try {
@@ -185,7 +240,14 @@ export function BookOpsCamera({ onBook, notice }: Props) {
 
   return (
     <section aria-label="Camera" className="flex flex-col gap-3">
-      <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Camera · next book</h2>
+      <div className="flex min-h-8 items-center justify-between gap-2">
+        <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Camera · next book</h2>
+        {status !== "off" && (
+          <button type="button" onClick={stopByHand} className="h-8 rounded-lg border border-line bg-surface px-3 text-sm font-medium hover:border-accent">
+            Stop camera
+          </button>
+        )}
+      </div>
 
       <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-black">
         <video ref={videoRef} muted playsInline aria-label="Camera picture" className={`size-full object-contain ${live ? "" : "invisible"}`} />
@@ -207,8 +269,8 @@ export function BookOpsCamera({ onBook, notice }: Props) {
               <p>Starting the camera…</p>
             ) : (
               <>
-                <p role="alert">{error ?? "The camera is off."}</p>
-                <button type="button" onClick={() => void start(current ?? stored())} className="h-10 rounded-lg bg-white px-4 font-medium text-black">
+                {error ? <p role="alert">{error}</p> : <p role="status" aria-label="Camera off">{offNote ?? "The camera is off."}</p>}
+                <button type="button" onClick={startByHand} className="h-10 rounded-lg bg-white px-4 font-medium text-black">
                   Start camera
                 </button>
               </>

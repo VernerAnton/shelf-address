@@ -22,7 +22,7 @@ const visible = (loc, t = 15000) => loc.first().waitFor({ state: "visible", time
   const clearOfRows = async () => {
     await page.waitForTimeout(1500);
     return page.evaluate(() => {
-      const stamp = [...document.querySelectorAll("p, span, div")].reverse().find((el) => /^V\d+$/.test(el.textContent.trim()));
+      const stamp = [...document.querySelectorAll("p, span, div")].reverse().find((el) => /^V[\d.]+$/.test(el.textContent.trim()));
       const rows = document.querySelector("nav[aria-label=Main]").parentElement.getBoundingClientRect();
       if (!stamp) return false;
       const stampBottom = stamp.getBoundingClientRect().bottom + scrollY;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraIcon, CheckIcon } from "@/components/icons";
-import { canvasOfFile, frameOf, toJpeg } from "@/lib/client/bookops";
+import { canvasOfFile, DEFAULT_VIEW, drawView, frameOf, toJpeg, ZOOMS, type CameraView } from "@/lib/client/bookops";
 
 export type Side = "front" | "back";
 export type Shots = {
@@ -30,6 +30,21 @@ const SIDE_NAME: Record<Side, string> = { front: "Front cover", back: "Back cove
 const CAMERA_KEY = "bookops:camera";
 /** Set while the camera has been stopped by hand: it then stays off when BookOps is opened again, until started. */
 const OFF_KEY = "bookops:camera-off";
+/** Upright or whole, zoom and turn: set to suit the stand once, remembered on this computer. */
+const VIEW_KEY = "bookops:view";
+
+function storedView(): CameraView {
+  try {
+    const v = JSON.parse(localStorage.getItem(VIEW_KEY) ?? "null") as Partial<CameraView> | null;
+    return {
+      shape: v?.shape === "whole" ? "whole" : "upright",
+      zoom: ZOOMS.includes(Number(v?.zoom)) ? Number(v?.zoom) : 1,
+      turn: ([0, 90, 180, 270] as const).find((t) => t === v?.turn) ?? 0,
+    };
+  } catch {
+    return DEFAULT_VIEW;
+  }
+}
 /** The camera stops by itself after this long without a picture. */
 export const IDLE_STOP_MS = 10 * 60 * 1000;
 
@@ -74,6 +89,10 @@ function why(error: unknown): string {
  * it lacks are taken; "New book instead" overrides that. Otherwise two
  * pictures make a new book.
  *
+ * The picture is shown book-shaped (upright, 3:4, from the middle of a wide
+ * webcam picture), with zoom and turn for the stand, remembered on this
+ * computer; what's shown is exactly what's saved (lib/client/bookops.ts).
+ *
  * It isn't live all the time: "Stop camera" turns it off (the camera light
  * goes out) and it stays off — also the next time BookOps is opened in this
  * browser — until "Start camera". It also stops by itself after
@@ -96,6 +115,14 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
   /** Why the camera is off, when it was stopped on purpose (not an error). */
   const [offNote, setOffNote] = useState<string | null>(null);
   const lastUsedRef = useRef(0);
+  const previewRef = useRef<HTMLCanvasElement>(null);
+  const [view, setViewState] = useState<CameraView>(DEFAULT_VIEW);
+  const viewRef = useRef<CameraView>(DEFAULT_VIEW);
+  const setView = (next: CameraView) => {
+    viewRef.current = next;
+    setViewState(next);
+    remember(VIEW_KEY, JSON.stringify(next));
+  };
 
   /** Lets go of the camera (its light goes out). */
   const stop = useCallback(() => {
@@ -153,6 +180,8 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
 
   useEffect(() => {
     const first = setTimeout(() => {
+      viewRef.current = storedView();
+      setViewState(viewRef.current);
       if (stored(OFF_KEY)) turnOff("The camera is off.");
       else void start(stored());
     }, 0);
@@ -161,6 +190,20 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
       stop();
     };
   }, [start, stop, turnOff]);
+
+  // The preview: the view of the camera's picture, drawn as often as the screen refreshes.
+  useEffect(() => {
+    if (status !== "live") return;
+    let frame = 0;
+    const draw = () => {
+      const video = videoRef.current;
+      const canvas = previewRef.current;
+      if (video && canvas && document.visibilityState === "visible") drawView(video, viewRef.current, canvas, 900);
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(frame);
+  }, [status]);
 
   // Not live all the time: off by itself after a while without a picture.
   useEffect(() => {
@@ -221,7 +264,7 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
   const take = useCallback(async () => {
     const video = videoRef.current;
     if (busyRef.current || !video || !streamRef.current) return;
-    const canvas = frameOf(video);
+    const canvas = frameOf(video, viewRef.current);
     if (!canvas) return;
     busyRef.current = true;
     lastUsedRef.current = Date.now();
@@ -293,11 +336,13 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
         )}
       </div>
 
-      <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-black">
-        <video ref={videoRef} muted playsInline aria-label="Camera picture" className={`size-full object-contain ${live ? "" : "invisible"}`} />
+      <div className="relative overflow-hidden rounded-xl bg-black" style={live ? undefined : { aspectRatio: view.shape === "upright" ? "3 / 4" : "4 / 3" }}>
+        {/* The camera itself, out of sight: the canvas shows the view of it. */}
+        <video ref={videoRef} muted playsInline aria-label="Camera picture" className="pointer-events-none absolute top-0 left-0 size-px opacity-0" />
+        <canvas ref={previewRef} aria-label="Camera view" className={`block h-auto max-h-[70vh] w-full object-contain ${live ? "" : "hidden"}`} />
         {live ? (
           <>
-            <div aria-hidden className="pointer-events-none absolute inset-x-[22%] inset-y-[10%] rounded-md border-2 border-dashed border-white/60" />
+            <div aria-hidden className="pointer-events-none absolute inset-[4%] rounded-md border-2 border-dashed border-white/50" />
             <span className="absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-semibold text-white">
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-red-500" />
               LIVE
@@ -354,6 +399,50 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
         Take picture
         <kbd className="rounded bg-white/20 px-2 py-0.5 font-sans text-xs font-medium">Space</kbd>
       </button>
+
+      {live && (
+        <div role="group" aria-label="Camera view settings" className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="flex items-center overflow-hidden rounded-lg border border-line bg-surface">
+            <button
+              type="button"
+              aria-label="Zoom out"
+              disabled={view.zoom === ZOOMS[0]}
+              onClick={() => setView({ ...view, zoom: ZOOMS[Math.max(0, ZOOMS.indexOf(view.zoom) - 1)] })}
+              className="h-9 w-9 font-semibold disabled:opacity-30"
+            >
+              −
+            </button>
+            <span aria-label="Zoom" className="min-w-12 text-center tabular-nums">
+              {String(view.zoom).replace(".", ",")}×
+            </span>
+            <button
+              type="button"
+              aria-label="Zoom in"
+              disabled={view.zoom === ZOOMS.at(-1)}
+              onClick={() => setView({ ...view, zoom: ZOOMS[Math.min(ZOOMS.length - 1, ZOOMS.indexOf(view.zoom) + 1)] })}
+              className="h-9 w-9 font-semibold disabled:opacity-30"
+            >
+              +
+            </button>
+          </span>
+          <button
+            type="button"
+            onClick={() => setView({ ...view, turn: (((view.turn + 90) % 360) as CameraView["turn"]) })}
+            className="h-9 rounded-lg border border-line bg-surface px-3"
+            title="For a webcam mounted on its side"
+          >
+            Turn ↻{view.turn ? ` ${view.turn}°` : ""}
+          </button>
+          <button
+            type="button"
+            aria-pressed={view.shape === "whole"}
+            onClick={() => setView({ ...view, shape: view.shape === "upright" ? "whole" : "upright" })}
+            className="h-9 rounded-lg border border-line bg-surface px-3"
+          >
+            {view.shape === "upright" ? "Whole picture" : "Book-shaped"}
+          </button>
+        </div>
+      )}
 
       {live && error && (
         <p role="alert" className="text-sm text-danger">

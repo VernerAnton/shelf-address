@@ -34,15 +34,26 @@ const logIn = async (page) => {
 const t = suite();
 (async () => {
   const { check } = t;
-  const b = await browser("book"); // the camera shows a book's barcode: 9789510366868, which no stand-in database knows
+  const b = await browser("upright"); // the camera shows a book's barcode: 9789510366868, which no stand-in database knows
   const page = await phone(b, t);
   const pcCtx = await b.newContext({ baseURL: BASE_URL, viewport: { width: 1440, height: 950 }, permissions: ["camera"] });
   await pcCtx.route(/^https:\/\/www\.(antikvaari\.fi|adlibris\.com|suomalainen\.com|akateeminen\.com)\//, (r) => r.fulfill({ contentType: "text/html", body: "<title>shop stand-in</title>" }));
   const pc = await pcCtx.newPage();
   pc.setDefaultTimeout(20000);
   pc.on("pageerror", (e) => t.errors.push(String(e)));
-  const labels = (nav) => nav.getByRole("link").allInnerTexts().then((x) => x.map((s) => s.trim()).join(","));
-  const current = (nav) => nav.locator("[aria-current=page]").allInnerTexts().then((x) => x.map((s) => s.trim()).join(","));
+  // Retried: a page still settling after a navigation can drop the first read.
+  const settled = async (read) => {
+    for (let i = 0; ; i++) {
+      try {
+        return await read();
+      } catch (e) {
+        if (i >= 5) throw e;
+        await sleep(500);
+      }
+    }
+  };
+  const labels = (nav) => settled(() => nav.getByRole("link").allInnerTexts()).then((x) => x.map((s) => s.trim()).join(","));
+  const current = (nav) => settled(() => nav.locator("[aria-current=page]").allInnerTexts()).then((x) => x.map((s) => s.trim()).join(","));
 
   // The Extract tab: two options, and it still opens Text Extract.
   const main = page.getByRole("navigation", { name: "Main" });
@@ -115,6 +126,24 @@ const t = suite();
   }));
   check("says the web store connection is a test", await visible(pc.getByText(/test connection to the web store/)));
 
+  // The view: upright (book-shaped) by default; zoom, turn and whole picture, remembered on this computer.
+  const viewSize = () => camera.getByRole("img", { name: "Camera view" }).or(camera.locator("canvas[aria-label='Camera view']")).first().evaluate((c) => [c.width, c.height]);
+  const settings = camera.getByRole("group", { name: "Camera view settings" });
+  check("the view is upright, 3:4", await until(async () => { const [w, h] = await viewSize(); return w > 0 && Math.abs(w / h - 0.75) < 0.01; }), JSON.stringify(await viewSize()));
+  const [w1] = await viewSize();
+  await settings.getByRole("button", { name: "Zoom in" }).click();
+  check("zoom in: 1,25×, a smaller part of the picture", (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1,25×" && await until(async () => (await viewSize())[0] < w1));
+  await settings.getByRole("button", { name: "Whole picture" }).click();
+  check("whole picture: not cut to a book shape", await until(async () => { const [w, h] = await viewSize(); return Math.abs(w / h - 4 / 3) < 0.01; }));
+  await settings.getByRole("button", { name: /^Turn/ }).click();
+  check("turn: 90°, the picture turned on its side", /90°/.test(await settings.getByRole("button", { name: /^Turn/ }).innerText()) && await until(async () => { const [w, h] = await viewSize(); return Math.abs(w / h - 3 / 4) < 0.01; }));
+  await pc.reload();
+  check("the view is remembered on this computer", await visible(camera.getByText("LIVE")) && (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1,25×" && /90°/.test(await settings.getByRole("button", { name: /^Turn/ }).innerText()) && await visible(settings.getByRole("button", { name: "Book-shaped" })));
+  await settings.getByRole("button", { name: "Book-shaped" }).click();
+  await settings.getByRole("button", { name: "Zoom out" }).click();
+  for (let i = 0; i < 3; i++) await settings.getByRole("button", { name: /^Turn/ }).click();
+  check("…and back to upright, 1×, not turned", (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1×" && (await settings.getByRole("button", { name: /^Turn/ }).innerText()).trim() === "Turn ↻" && await until(async () => (await viewSize())[0] === w1));
+
   // Space takes the picture — but not while typing.
   const isbnBox = pc.getByRole("form", { name: "Add by ISBN" }).getByLabel("ISBN");
   await isbnBox.click();
@@ -143,6 +172,7 @@ const t = suite();
   check("queue: To price, and Check", await visible(queue.getByRole("button", { name: /To price.*Check.*Tuntematon sotilas/s })));
   const photos = pc.getByRole("region", { name: "Photos of this book" });
   check("both photos shown", await until(() => photos.locator("img").evaluateAll((imgs) => imgs.length === 2 && imgs.every((i) => i.complete && i.naturalWidth > 0))));
+  check("…saved book-shaped (upright 3:4), as the camera view showed them", await photos.locator("img").evaluateAll((imgs) => imgs.every((i) => Math.abs(i.naturalWidth / i.naturalHeight - 0.75) < 0.01)), await photos.locator("img").evaluateAll((imgs) => imgs.map((i) => `${i.naturalWidth}x${i.naturalHeight}`).join(",")));
   check("no price suggested", (await bookBox.getByLabel("Price €").inputValue()) === "" && book.price_cents === null);
 
   // The price check: four links, the ISBN filled in.

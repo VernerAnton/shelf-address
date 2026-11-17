@@ -23,10 +23,70 @@ function canvasOf(source: CanvasImageSource, width: number, height: number, maxS
   return canvas;
 }
 
-/** What the camera shows right now, at the camera's full size. Null before the first picture arrives. */
-export function frameOf(video: HTMLVideoElement): HTMLCanvasElement | null {
-  if (!video.videoWidth || !video.videoHeight) return null;
-  return canvasOf(video, video.videoWidth, video.videoHeight, Math.max(video.videoWidth, video.videoHeight));
+/**
+ * How the camera's picture is shown and saved (docs/spec-corrections.md §27):
+ * - shape "upright": a book-shaped 3:4 portrait cut from the middle of the
+ *   picture (a webcam is wide, a book is tall); "whole": all of it;
+ * - zoom: 1 = as large as fits, 2 = half as wide and high (digital zoom: it
+ *   uses fewer of the camera's pixels);
+ * - turn: for a webcam mounted on its side — then a portrait uses the
+ *   camera's full width, much sharper.
+ * What's shown is exactly what's saved.
+ */
+export type CameraView = { shape: "upright" | "whole"; zoom: number; turn: 0 | 90 | 180 | 270 };
+export const DEFAULT_VIEW: CameraView = { shape: "upright", zoom: 1, turn: 0 };
+export const ZOOMS = [1, 1.25, 1.5, 2, 2.5, 3];
+
+/** The part of the (turned) picture that's shown and saved, in the turned picture's pixels. */
+export function viewRect(videoWidth: number, videoHeight: number, view: CameraView) {
+  const sideways = view.turn % 180 !== 0;
+  const w = sideways ? videoHeight : videoWidth;
+  const h = sideways ? videoWidth : videoHeight;
+  let cw = w / view.zoom;
+  let ch = h / view.zoom;
+  if (view.shape === "upright") {
+    if (cw / ch > 3 / 4) cw = (ch * 3) / 4;
+    else ch = (cw * 4) / 3;
+  }
+  return { turnedWidth: w, turnedHeight: h, x: (w - cw) / 2, y: (h - ch) / 2, width: cw, height: ch };
+}
+
+/** Draws the view of the camera's current picture into `canvas`, at most `maxSide` pixels on its longer side. */
+export function drawView(video: HTMLVideoElement, view: CameraView, canvas: HTMLCanvasElement, maxSide: number): boolean {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const r = viewRect(vw, vh, view);
+  const k = Math.min(1, maxSide / Math.max(r.width, r.height));
+  const width = Math.max(1, Math.round(r.width * k));
+  const height = Math.max(1, Math.round(r.height * k));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return false;
+  context.save();
+  context.scale(k, k);
+  context.translate(-r.x, -r.y);
+  // Turned clockwise by `turn` degrees.
+  if (view.turn === 90) {
+    context.translate(r.turnedWidth, 0);
+    context.rotate(Math.PI / 2);
+  } else if (view.turn === 180) {
+    context.translate(r.turnedWidth, r.turnedHeight);
+    context.rotate(Math.PI);
+  } else if (view.turn === 270) {
+    context.translate(0, r.turnedHeight);
+    context.rotate(-Math.PI / 2);
+  }
+  context.drawImage(video, 0, 0, vw, vh);
+  context.restore();
+  return true;
+}
+
+/** What the camera shows right now, as the view shows it, at the camera's full sharpness. Null before the first picture arrives. */
+export function frameOf(video: HTMLVideoElement, view: CameraView = DEFAULT_VIEW): HTMLCanvasElement | null {
+  const canvas = document.createElement("canvas");
+  return drawView(video, view, canvas, WORK_SIDE) ? canvas : null;
 }
 
 /** A photo file (from the phone's camera app, or chosen on the computer), ready to work on. */

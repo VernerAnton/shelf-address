@@ -583,6 +583,13 @@ First version, to try the way of working before any equipment is bought.
     is ready for the next book at once — it never waits for the reading. A
     camera picker shows when there are several; "Use photo files" takes the
     pictures from files instead.
+  - **Book-shaped view** (V29): the camera's picture is shown upright, 3:4,
+    cut from the middle of a wide webcam picture, and **what's shown is
+    exactly what's saved** (`lib/client/bookops.ts`, `viewRect`). Zoom
+    (1×–3×, digital: fewer of the camera's pixels), **Turn** (for a webcam
+    mounted on its side, which makes an upright picture use the camera's
+    full width — much sharper) and **Whole picture** (not cut, for unusual
+    shapes); remembered on that computer.
   - **Not live all the time** (V27): "Stop camera" turns the camera off (its
     light goes out) and it stays off — also the next time BookOps is opened
     in that browser — until "Start camera". It also stops by itself after

@@ -590,6 +590,14 @@ First version, to try the way of working before any equipment is bought.
     mounted on its side, which makes an upright picture use the camera's
     full width — much sharper) and **Whole picture** (not cut, for unusual
     shapes); remembered on that computer.
+  - **Focus** (V30): a webcam's autofocus hunts on every new book; on a
+    stand the book is always the same distance away. When the camera lets
+    the browser set its focus (Chrome, and a webcam whose driver offers it —
+    read from the camera, never assumed), **Auto | Fixed** is offered: Fixed
+    keeps the focus where autofocus landed, with a Near–Far slider, and is
+    remembered for that camera by its name (`lib/client/camera-focus.ts`).
+    A camera that doesn't offer it says so, and points to its own settings
+    app, which can often turn autofocus off.
   - **Not live all the time** (V27): "Stop camera" turns the camera off (its
     light goes out) and it stays off — also the next time BookOps is opened
     in that browser — until "Start camera". It also stops by itself after

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraIcon, CheckIcon } from "@/components/icons";
+import { applyFocus, currentFocus, focusRange, rememberFocus, storedFocus, type FocusRange, type FocusSetting } from "@/lib/client/camera-focus";
 import { canvasOfFile, DEFAULT_VIEW, drawView, frameOf, toJpeg, ZOOMS, type CameraView } from "@/lib/client/bookops";
 
 export type Side = "front" | "back";
@@ -116,6 +117,9 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
   const [offNote, setOffNote] = useState<string | null>(null);
   const lastUsedRef = useRef(0);
   const previewRef = useRef<HTMLCanvasElement>(null);
+  /** The camera's focus range when the browser can set it (null: the camera keeps its own autofocus), and the setting. */
+  const [focus, setFocus] = useState<{ range: FocusRange | null; setting: FocusSetting } | null>(null);
+  const [cameraName, setCameraName] = useState<string | null>(null);
   const [view, setViewState] = useState<CameraView>(DEFAULT_VIEW);
   const viewRef = useRef<CameraView>(DEFAULT_VIEW);
   const setView = (next: CameraView) => {
@@ -168,7 +172,17 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
         }
         const all = await navigator.mediaDevices.enumerateDevices().catch(() => []);
         setCameras(all.filter((d) => d.kind === "videoinput").map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Camera ${i + 1}` })));
-        setCurrent(stream.getVideoTracks()[0]?.getSettings().deviceId ?? deviceId);
+        const track = stream.getVideoTracks()[0];
+        const id = track?.getSettings().deviceId ?? deviceId;
+        setCurrent(id);
+        // Focus: what this camera lets the browser do, and what was chosen for it before.
+        const range = focusRange(track);
+        // Remembered by the camera's name: its id can change from one visit to the next.
+        const name = track?.label || id;
+        setCameraName(name);
+        const saved = storedFocus(name);
+        if (range && track && saved?.mode === "fixed") await applyFocus(track, saved);
+        setFocus({ range, setting: range && saved ? saved : { mode: "auto", value: range ? currentFocus(track!, range) : 0 } });
         setStatus("live");
       } catch (e) {
         setStatus("off");
@@ -222,6 +236,25 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
   const startByHand = () => {
     remember(OFF_KEY, null);
     void start(current ?? stored());
+  };
+
+  /** Auto: the camera's own autofocus. Fixed: the focus stays where it is now (where autofocus landed), adjustable. */
+  const setFocusMode = async (mode: FocusSetting["mode"]) => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track || !focus?.range) return;
+    const setting = { mode, value: mode === "fixed" ? currentFocus(track, focus.range) : focus.setting.value };
+    if (!(await applyFocus(track, setting))) return setError("The camera didn't accept that focus setting.");
+    setFocus({ ...focus, setting });
+    rememberFocus(cameraName, setting);
+  };
+
+  const setFocusValue = async (value: number) => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track || !focus?.range) return;
+    const setting: FocusSetting = { mode: "fixed", value };
+    setFocus({ ...focus, setting });
+    rememberFocus(cameraName, setting);
+    await applyFocus(track, setting);
   };
 
   const choose = (deviceId: string) => {
@@ -441,6 +474,56 @@ export function BookOpsCamera({ target, onShots, notice }: Props) {
           >
             {view.shape === "upright" ? "Whole picture" : "Book-shaped"}
           </button>
+        </div>
+      )}
+
+      {live && focus && (
+        <div role="group" aria-label="Focus" className="flex flex-col gap-2 text-sm">
+          {focus.range ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted">Focus</span>
+                <span className="flex overflow-hidden rounded-lg border border-line bg-surface">
+                  {(["auto", "fixed"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      aria-pressed={focus.setting.mode === mode}
+                      onClick={() => void setFocusMode(mode)}
+                      className={`h-9 px-3 ${focus.setting.mode === mode ? "bg-accent text-accent-contrast" : ""}`}
+                    >
+                      {mode === "auto" ? "Auto" : "Fixed"}
+                    </button>
+                  ))}
+                </span>
+              </div>
+              {focus.setting.mode === "fixed" ? (
+                <label className="flex items-center gap-2">
+                  <span className="shrink-0 text-xs text-muted">Near</span>
+                  <input
+                    type="range"
+                    aria-label="Focus distance"
+                    min={focus.range.min}
+                    max={focus.range.max}
+                    step={focus.range.step}
+                    value={focus.setting.value}
+                    onChange={(e) => void setFocusValue(Number(e.target.value))}
+                    className="min-w-0 flex-1 accent-[var(--accent)]"
+                  />
+                  <span className="shrink-0 text-xs text-muted">Far</span>
+                </label>
+              ) : (
+                <p className="text-xs text-muted">
+                  Tip: hold a book where it will lie, let the camera focus, then press Fixed — the focus stays there, no waiting.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-muted">
+              This camera doesn&apos;t let the browser set its focus, so it uses its own autofocus. Its own settings app (from the
+              camera&apos;s maker, or the computer&apos;s camera settings) can often turn autofocus off and fix the focus.
+            </p>
+          )}
         </div>
       )}
 

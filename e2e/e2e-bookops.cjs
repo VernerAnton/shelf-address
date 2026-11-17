@@ -335,6 +335,38 @@ const t = suite();
   check("off by itself after 10 minutes without a picture, and says so", await visible(idleCamera.getByRole("status", { name: "Camera off" }).getByText(/stopped by itself after 10 minutes without a picture/)));
   await idle.close();
 
+  // Focus: this fake camera can't be focused by the browser — said so.
+  check("a camera without browser focus control: says it keeps its own autofocus", await visible(camera.getByRole("group", { name: "Focus" }).getByText(/doesn't let the browser set its focus/)));
+  // A webcam that can (simulated: what Chrome reports for one), with its autofocus landed at 0.3.
+  const fpage = await pcCtx.newPage();
+  await fpage.addInitScript(() => {
+    window.__focus = [];
+    const P = MediaStreamTrack.prototype;
+    const caps = P.getCapabilities, settings = P.getSettings, apply = P.applyConstraints;
+    let now = { focusMode: "continuous", focusDistance: 0.3 };
+    P.getCapabilities = function () { return { ...caps.call(this), focusMode: ["manual", "single-shot", "continuous"], focusDistance: { min: 0.1, max: 2, step: 0.05 } }; };
+    P.getSettings = function () { return { ...settings.call(this), ...now }; };
+    P.applyConstraints = async function (c) {
+      const a = (c && c.advanced && c.advanced[0]) || {};
+      if ("focusMode" in a) { window.__focus.push(a); now = { ...now, ...a }; return; }
+      return apply.call(this, c);
+    };
+  });
+  await fpage.goto("/extract/bookops");
+  const fcam = fpage.getByRole("region", { name: "Camera", exact: true });
+  const focusGroup = fcam.getByRole("group", { name: "Focus" });
+  const applied = () => fpage.evaluate(() => window.__focus);
+  check("focus: Auto and Fixed offered, Auto to start", await visible(focusGroup.getByRole("button", { name: "Fixed" })) && (await focusGroup.getByRole("button", { name: "Auto" }).getAttribute("aria-pressed")) === "true");
+  await focusGroup.getByRole("button", { name: "Fixed" }).click();
+  check("Fixed: the focus stays where autofocus landed", await until(async () => JSON.stringify((await applied()).at(-1)) === JSON.stringify({ focusMode: "manual", focusDistance: 0.3 })), JSON.stringify(await applied()));
+  await focusGroup.getByLabel("Focus distance").fill("0.5");
+  check("…adjustable: nearer or farther", await until(async () => (await applied()).at(-1).focusDistance === 0.5));
+  await fpage.reload();
+  check("…remembered for this camera: fixed again when the camera starts", await visible(fcam.getByText("LIVE")) && await until(async () => JSON.stringify((await applied())[0]) === JSON.stringify({ focusMode: "manual", focusDistance: 0.5 })) && (await focusGroup.getByLabel("Focus distance").inputValue()) === "0.5");
+  await focusGroup.getByRole("button", { name: "Auto" }).click();
+  check("Auto: the camera's own autofocus again", await until(async () => (await applied()).at(-1).focusMode === "continuous") && (await focusGroup.getByLabel("Focus distance").count()) === 0);
+  await fpage.close();
+
   // The rest of the app is as it was.
   check("no other table touched", sql("SELECT (SELECT COUNT(*) FROM editions) + (SELECT COUNT(*) FROM copies) + (SELECT COUNT(*) FROM saved_texts) AS n")[0].n === 0);
 

@@ -4,9 +4,14 @@
 
 `APP_VERSION` in `lib/version.ts` is shown as "V<n>" at the foot of every tab,
 so the person can tell at a glance whether a phone is running the newest
-build. **Bump it by one whenever work ships (before deploying).** It's
-hand-maintained on purpose: it marks changes worth noticing, not every commit.
-Forget it and two phones on different builds both say the same number.
+build. **Bump it whenever work ships (before deploying)** — the owner's rule:
+
+- **Small fix or tweak:** add .1 — "32" → "32.1" → "32.2".
+- **Big change:** the next whole number — "32.2" → "33".
+
+It's a string (so "32.10" stays itself) and hand-maintained on purpose: it
+marks changes worth noticing, not every commit. Forget it and two phones on
+different builds both say the same number.
 
 ## Update detection — deliberate, don't "simplify"
 

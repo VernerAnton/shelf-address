@@ -180,6 +180,19 @@ const t = suite();
   const photos = pc.getByRole("region", { name: "Photos of this book" });
   check("both photos shown", await until(() => photos.locator("img").evaluateAll((imgs) => imgs.length === 2 && imgs.every((i) => i.complete && i.naturalWidth > 0))));
   check("…saved book-shaped (upright 3:4), as the camera view showed them", await photos.locator("img").evaluateAll((imgs) => imgs.every((i) => Math.abs(i.naturalWidth / i.naturalHeight - 0.75) < 0.01)), await photos.locator("img").evaluateAll((imgs) => imgs.map((i) => `${i.naturalWidth}x${i.naturalHeight}`).join(",")));
+  // A photo shown large, and closed again: ✕, Esc, or a click beside it.
+  const viewer = pc.getByRole("dialog");
+  await photos.getByRole("button", { name: /Show larger: Front cover/ }).click();
+  check("photo: shown large over the page", await visible(viewer.getByRole("img")) && pc.url().endsWith("/extract/bookops"));
+  await pc.keyboard.press("Escape");
+  check("…Esc closes it", await gone(viewer, 5000));
+  await photos.getByRole("button", { name: /Show larger: Back cover/ }).click();
+  await visible(viewer.getByRole("img"));
+  await pc.mouse.click(5, 5);
+  check("…a click beside the photo closes it", await gone(viewer, 5000));
+  await photos.getByRole("button", { name: /Show larger: Front cover/ }).click();
+  await viewer.getByRole("button", { name: "Close" }).click();
+  check("…and so does Close", await gone(viewer, 5000));
   check("no price suggested", (await bookBox.getByLabel("Price €").inputValue()) === "" && book.price_cents === null);
 
   // The price check: four links, the ISBN filled in.

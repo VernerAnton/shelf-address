@@ -46,7 +46,7 @@ export async function logPhoto(entry: NewEntry, photo: Blob | null, thumb: Blob 
     id: entry.id ?? crypto.randomUUID(),
     screen: location.pathname,
     userAgent: navigator.userAgent,
-    appVersion: APP_VERSION,
+    appVersion: Number(APP_VERSION),
   };
   const pending = (await kvGet<string[]>(PENDING_KEY)) ?? [];
   const keep = [...pending, meta.id];

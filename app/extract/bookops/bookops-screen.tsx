@@ -18,6 +18,7 @@ import { STORE_IS_STAND_IN } from "@/lib/bookops-store";
 import { bookOps, BookOpsApiError, readBarcode } from "@/lib/client/bookops";
 import { formatIsbn, parseIsbn } from "@/lib/isbn";
 import { PRICE_SITES, priceQuery } from "@/lib/price-sites";
+import { PhotoViewer } from "@/components/photo-viewer";
 import { LoginForm } from "../_components/login-form";
 import { BookOpsCamera, type CameraTarget, type Shots } from "./bookops-camera";
 
@@ -96,6 +97,8 @@ export function BookOpsScreen() {
   const [isbn, setIsbn] = useState("");
   const [isbnNote, setIsbnNote] = useState<string | null>(null);
   const [webcam, setWebcamState] = useState(false);
+  /** A photo shown large over the page. */
+  const [viewing, setViewing] = useState<{ src: string; caption: string } | null>(null);
   const setWebcam = (on: boolean) => setWebcamState(on);
   const chooseWebcam = (on: boolean) => {
     setWebcamState(on);
@@ -735,11 +738,17 @@ export function BookOpsScreen() {
                   ] as const
                 ).map(([caption, src]) =>
                   src ? (
-                    <a key={caption} href={src} target="_blank" rel="noreferrer" className="flex flex-col gap-1.5 text-xs text-muted">
+                    <button
+                      key={caption}
+                      type="button"
+                      onClick={() => setViewing({ src, caption })}
+                      aria-label={`Show larger: ${caption}`}
+                      className="flex cursor-zoom-in flex-col gap-1.5 text-left text-xs text-muted"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={src} alt="" className="aspect-[3/4] w-full rounded-md bg-line/70 object-contain" />
                       {caption}
-                    </a>
+                    </button>
                   ) : (
                     <div key={caption} className="flex flex-col gap-1.5 text-xs text-muted">
                       <span className="flex aspect-[3/4] w-full items-center justify-center rounded-md border border-dashed border-line p-2 text-center">
@@ -754,6 +763,7 @@ export function BookOpsScreen() {
           )}
         </aside>
       </div>
+      <PhotoViewer photo={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

@@ -131,7 +131,15 @@ export const bookOps = {
       form.set("isbn", book.isbn);
       form.set("isbnSource", book.isbnSource ?? "barcode");
     }
-    return call<One>("/books", { method: "POST", body: form }).then((r) => r.book);
+    return call<One & { sameIsbn: number }>("/books", { method: "POST", body: form });
+  },
+  /** Photos for a book already in the queue: only the sides it doesn't have are kept. */
+  attach: (id: string, photos: { front?: Blob; back?: Blob; isbn?: string | null }) => {
+    const form = new FormData();
+    if (photos.front) form.set("front", photos.front, "front.jpg");
+    if (photos.back) form.set("back", photos.back, "back.jpg");
+    if (photos.isbn) form.set("isbn", photos.isbn);
+    return call<One>(`/books/${id}/photos`, { method: "POST", body: form }).then((r) => r.book);
   },
   edit: (id: string, patch: Record<string, unknown>) => call<One>(`/books/${id}`, json("PATCH", patch)).then((r) => r.book),
   remove: (id: string) => call<{ ok: boolean }>(`/books/${id}`, { method: "DELETE" }),

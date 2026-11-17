@@ -1,19 +1,32 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CameraIcon, CheckIcon } from "@/components/icons";
 import { canvasOfFile, frameOf, toJpeg } from "@/lib/client/bookops";
 
-export type Shots = { front: Blob; back: Blob; /** The back as photographed, for reading its barcode. */ backCanvas: HTMLCanvasElement };
+export type Side = "front" | "back";
+export type Shots = {
+  /** The book the photos are for, or null for a new book. */
+  targetId: string | null;
+  front?: Blob;
+  back?: Blob;
+  /** The back as photographed, for reading its barcode. */
+  backCanvas?: HTMLCanvasElement;
+};
+/** The open book, when it still needs photos: the camera's pictures go to it. */
+export type CameraTarget = { id: string; title: string; sides: Side[] };
 
 type Props = {
-  /** Both covers photographed: the book is the screen's from here, and the camera is free for the next. */
-  onBook: (shots: Shots) => void;
+  target: CameraTarget | null;
+  /** All the pictures needed are taken: they're the screen's from here, and the camera is free for the next. */
+  onShots: (shots: Shots) => void;
   /** How the last book went (said under the camera). */
   notice: { kind: "ok" | "warn" | "error"; text: string } | null;
 };
 
 type Camera = { deviceId: string; label: string };
+type Taken = { key: string; shots: Partial<Record<Side, { blob: Blob; url: string; canvas: HTMLCanvasElement }>> };
+const SIDE_NAME: Record<Side, string> = { front: "Front cover", back: "Back cover" };
 const CAMERA_KEY = "bookops:camera";
 /** Set while the camera has been stopped by hand: it then stays off when BookOps is opened again, until started. */
 const OFF_KEY = "bookops:camera-off";
@@ -56,22 +69,29 @@ function why(error: unknown): string {
  * The camera never waits for the book it just photographed: after the back
  * cover it's ready for the next one at once.
  *
+ * When the open book still lacks photos (scanned by ISBN, or only its back
+ * photographed on a phone), the pictures go to that book, and only the sides
+ * it lacks are taken; "New book instead" overrides that. Otherwise two
+ * pictures make a new book.
+ *
  * It isn't live all the time: "Stop camera" turns it off (the camera light
  * goes out) and it stays off — also the next time BookOps is opened in this
  * browser — until "Start camera". It also stops by itself after
  * IDLE_STOP_MS without a picture. A front cover already taken is kept.
  */
-export function BookOpsCamera({ onBook, notice }: Props) {
+export function BookOpsCamera({ target, onShots, notice }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const frontRef = useRef<{ blob: Blob; url: string } | null>(null);
+  const takenRef = useRef<Taken>({ key: "", shots: {} });
   const busyRef = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"starting" | "live" | "off">("starting");
   const [error, setError] = useState<string | null>(null);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
-  const [front, setFront] = useState<string | null>(null);
+  const [taken, setTaken] = useState<Taken>({ key: "", shots: {} });
+  /** "New book instead" was chosen while this book was open. */
+  const [newFor, setNewFor] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   /** Why the camera is off, when it was stopped on purpose (not an error). */
   const [offNote, setOffNote] = useState<string | null>(null);
@@ -166,22 +186,36 @@ export function BookOpsCamera({ onBook, notice }: Props) {
     void start(deviceId);
   };
 
-  /** One picture: the front cover first, then the back — and the book is done. */
+  /** What the pictures are for: the open book's missing sides, or a new book's two. */
+  const forBook = target && newFor !== target.id ? target : null;
+  const targetId = forBook?.id ?? null;
+  const sidesKey = forBook ? forBook.sides.join(",") : "front,back";
+  const plan = useMemo(() => ({ key: `${targetId ?? "new"}:${sidesKey}`, targetId, sides: sidesKey.split(",") as Side[] }), [targetId, sidesKey]);
+
+  const keep = (next: Taken) => {
+    takenRef.current = next;
+    setTaken(next);
+  };
+
+  /** One picture: the next side still needed — and when none is left, the photos go off. */
   const shot = useCallback(
     async (canvas: HTMLCanvasElement) => {
       const blob = await toJpeg(canvas);
-      const before = frontRef.current;
-      if (!before) {
-        frontRef.current = { blob, url: URL.createObjectURL(blob) };
-        setFront(frontRef.current.url);
+      const before = takenRef.current;
+      // Pictures half-taken for another book are dropped.
+      if (before.key !== plan.key) Object.values(before.shots).forEach((x) => URL.revokeObjectURL(x.url));
+      const shots = before.key === plan.key ? before.shots : {};
+      const side = plan.sides.find((x) => !shots[x]) ?? plan.sides[0];
+      const next = { ...shots, [side]: { blob, url: URL.createObjectURL(blob), canvas } };
+      if (plan.sides.every((x) => next[x])) {
+        Object.values(next).forEach((x) => URL.revokeObjectURL(x.url));
+        keep({ key: plan.key, shots: {} });
+        onShots({ targetId: plan.targetId, front: next.front?.blob, back: next.back?.blob, backCanvas: next.back?.canvas });
         return;
       }
-      frontRef.current = null;
-      setFront(null);
-      URL.revokeObjectURL(before.url);
-      onBook({ front: before.blob, back: blob, backCanvas: canvas });
+      keep({ key: plan.key, shots: next });
     },
-    [onBook],
+    [plan, onShots],
   );
 
   const take = useCallback(async () => {
@@ -220,7 +254,7 @@ export function BookOpsCamera({ onBook, notice }: Props) {
     busyRef.current = true;
     setError(null);
     try {
-      for (const file of [...files].slice(0, 2)) await shot(await canvasOfFile(file));
+      for (const file of [...files].slice(0, plan.sides.length)) await shot(await canvasOfFile(file));
     } catch {
       setError("Couldn't open that photo file. Try another (JPEG or PNG).");
     } finally {
@@ -230,18 +264,28 @@ export function BookOpsCamera({ onBook, notice }: Props) {
   };
 
   const startOver = () => {
-    if (frontRef.current) URL.revokeObjectURL(frontRef.current.url);
-    frontRef.current = null;
-    setFront(null);
+    Object.values(takenRef.current.shots).forEach((x) => URL.revokeObjectURL(x.url));
+    keep({ key: plan.key, shots: {} });
   };
 
+  const shots = taken.key === plan.key ? taken.shots : {};
+  const nextSide = plan.sides.find((x) => !shots[x]) ?? plan.sides[0];
+  const started = Object.keys(shots).length > 0;
   const live = status === "live";
   const step = "flex min-w-0 items-center gap-2 rounded-lg border bg-surface px-2.5 py-1.5";
 
   return (
     <section aria-label="Camera" className="flex flex-col gap-3">
       <div className="flex min-h-8 items-center justify-between gap-2">
-        <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Camera · next book</h2>
+        <h2 className="min-w-0 truncate text-xs font-semibold tracking-wider text-muted uppercase">
+          {forBook ? (
+            <>
+              Photos for: <span className="text-foreground normal-case tracking-normal">{forBook.title}</span>
+            </>
+          ) : (
+            "Camera · new book"
+          )}
+        </h2>
         {status !== "off" && (
           <button type="button" onClick={stopByHand} className="h-8 rounded-lg border border-line bg-surface px-3 text-sm font-medium hover:border-accent">
             Stop camera
@@ -259,7 +303,7 @@ export function BookOpsCamera({ onBook, notice }: Props) {
               LIVE
             </span>
             <p className="pointer-events-none absolute inset-x-0 bottom-2 px-3 text-center text-sm text-white drop-shadow">
-              {front ? "Now the back cover" : "Front cover up, inside the frame"}
+              {nextSide === "back" ? (started ? "Now the back cover" : "Back cover up, inside the frame") : "Front cover up, inside the frame"}
             </p>
             {flash && <div aria-hidden className="absolute inset-0 bg-white/70" />}
           </>
@@ -279,25 +323,25 @@ export function BookOpsCamera({ onBook, notice }: Props) {
         )}
       </div>
 
-      <ol aria-label="Pictures of this book" className="grid grid-cols-2 gap-2">
-        <li className={`${step} ${front ? "border-line" : "border-2 border-accent"}`} aria-current={front ? undefined : "step"}>
-          {front && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={front} alt="" className="h-9 w-7 shrink-0 rounded-sm object-cover" />
-          )}
-          <span className="min-w-0">
-            <span className="flex items-center gap-1 text-[11px] text-muted">
-              Step 1 {front && <CheckIcon className="size-3.5" />}
-            </span>
-            <span className="block truncate text-sm font-semibold">Front cover</span>
-          </span>
-        </li>
-        <li className={`${step} ${front ? "border-2 border-accent" : "border-line"}`} aria-current={front ? "step" : undefined}>
-          <span className="min-w-0">
-            <span className="block text-[11px] text-muted">Step 2</span>
-            <span className={`block truncate text-sm font-semibold ${front ? "" : "text-muted"}`}>Back cover</span>
-          </span>
-        </li>
+      <ol aria-label="Pictures of this book" className={`grid gap-2 ${plan.sides.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
+        {plan.sides.map((side, i) => {
+          const done = shots[side];
+          const now = side === nextSide;
+          return (
+            <li key={side} className={`${step} ${now ? "border-2 border-accent" : "border-line"}`} aria-current={now ? "step" : undefined}>
+              {done && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={done.url} alt="" className="h-9 w-7 shrink-0 rounded-sm object-cover" />
+              )}
+              <span className="min-w-0">
+                <span className="flex items-center gap-1 text-[11px] text-muted">
+                  {plan.sides.length > 1 ? `Step ${i + 1}` : "Still needed"} {done && <CheckIcon className="size-3.5" />}
+                </span>
+                <span className={`block truncate text-sm font-semibold ${now || done ? "" : "text-muted"}`}>{SIDE_NAME[side]}</span>
+              </span>
+            </li>
+          );
+        })}
       </ol>
 
       <button
@@ -347,9 +391,21 @@ export function BookOpsCamera({ onBook, notice }: Props) {
         <button type="button" onClick={() => fileRef.current?.click()} className="font-medium text-accent underline-offset-2 hover:underline">
           Use photo files
         </button>
-        {front && (
+        {started && (
           <button type="button" onClick={startOver} className="font-medium text-accent underline-offset-2 hover:underline">
-            Retake the front
+            Retake
+          </button>
+        )}
+        {target && (
+          <button
+            type="button"
+            onClick={() => {
+              startOver();
+              setNewFor(forBook ? target.id : null);
+            }}
+            className="font-medium text-accent underline-offset-2 hover:underline"
+          >
+            {forBook ? "New book instead" : `Photos for: ${target.title}`}
           </button>
         )}
       </div>

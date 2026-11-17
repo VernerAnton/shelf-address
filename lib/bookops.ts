@@ -363,6 +363,67 @@ export async function editBook(id: string, patch: Record<string, unknown>): Prom
   return fromRow((await rowOf(id))!);
 }
 
+/**
+ * Photos for a book already in the queue — one scanned by ISBN, or one whose
+ * back cover was photographed on a phone — taken on the computer. Only the
+ * sides it doesn't have yet are stored; the AI then reads the book again (it
+ * fills in only what's still empty, as always). The barcode read from a new
+ * back photo gives the book its ISBN if it had none.
+ */
+export async function attachPhotos(
+  id: string,
+  input: { front?: NewPhoto | null; back?: NewPhoto | null; isbn?: string | null },
+): Promise<BookOpsBook> {
+  const row = await mustHave(id);
+  if (row.status === "listed") throw new BookOpsError("This book is in the web store. Take it back to change it.", 409);
+  const front = row.front_photo ? null : (input.front ?? null);
+  const back = row.back_photo ? null : (input.back ?? null);
+  if (!front && !back) throw new BookOpsError("This book already has those photos.", 409);
+  for (const photo of [front, back]) {
+    if (!photo) continue;
+    const problem = imageProblem(photo.type, photo.bytes, PHOTO_MAX_BYTES);
+    if (problem) throw new BookOpsError(problem, photo.bytes.byteLength > PHOTO_MAX_BYTES ? 413 : 400);
+  }
+  const bucket = await getBucket();
+  const stamp = Date.now();
+  const store = async (photo: NewPhoto | null, side: "front" | "back") => {
+    if (!photo) return null;
+    const key = `bookops/${id}-${side}-${stamp}.${IMAGE_TYPES[photo.type]}`;
+    await bucket.put(key, photo.bytes, { httpMetadata: { contentType: photo.type } });
+    return key;
+  };
+  const [frontKey, backKey] = await Promise.all([store(front, "front"), store(back, "back")]);
+  const parsed = input.isbn ? parseIsbn(input.isbn) : null;
+  const isbn13 = parsed?.ok ? parsed.isbn13 : null;
+  const db = await getDb();
+  await db
+    .prepare(
+      `UPDATE bookops_books SET
+         front_photo = COALESCE(front_photo, ?), back_photo = COALESCE(back_photo, ?),
+         ai_status = 'pending', ai_note = NULL, updated_at = ?
+       WHERE id = ?`,
+    )
+    .bind(frontKey, backKey, now(), id)
+    .run();
+  if (isbn13) {
+    await db
+      .prepare("UPDATE bookops_books SET isbn13 = ?, isbn_source = 'barcode', lookup_status = 'pending', lookup_attempts = 0 WHERE id = ? AND isbn13 IS NULL")
+      .bind(isbn13, id)
+      .run();
+  }
+  return fromRow((await rowOf(id))!);
+}
+
+/** How many other books still to do have this ISBN (a second copy, or a double scan). */
+export async function sameIsbnCount(book: BookOpsBook): Promise<number> {
+  if (!book.isbn13) return 0;
+  const row = await (await getDb())
+    .prepare("SELECT COUNT(*) AS n FROM bookops_books WHERE isbn13 = ? AND id <> ? AND status = 'draft'")
+    .bind(book.isbn13, book.id)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 /** Removes a book and its photos. Refused while it's in the web store. */
 export async function deleteBook(id: string): Promise<void> {
   validId(id);

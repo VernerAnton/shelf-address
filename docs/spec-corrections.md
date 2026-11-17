@@ -622,10 +622,29 @@ First version, to try the way of working before any equipment is bought.
   moment, answers with a reference — but nothing leaves the app, and the
   screen says "test connection". The real connection replaces those two
   functions; nothing else changes.
-- **BookOps on a phone:** the phone as the camera. Two buttons (front cover,
-  back cover) open the phone's own camera app; once both are taken the book
-  is sent, and appears in BookOps on the computer within seconds. Kept
-  simple: the pricing is done on the computer.
+- **BookOps on a phone** (V28): the phone is the hand-held ISBN scanner —
+  it does what the computer can't. The live barcode scanner (the same one as
+  Scan and Evaluate) opens at once; each barcode is a new book in the
+  computer's To do list, and its title arrives from the book databases
+  within seconds, on the phone's "Sent to the computer" list and on the
+  computer (which refreshes by itself). A book already in the queue is still
+  added — it may be a second copy — and the phone says "Already in the queue
+  — added another copy". **No barcode?** "Photograph the back cover": the
+  photo is the book — the AI reads the printed ISBN (check digit checked),
+  the databases give the title, and the photo is kept as its back cover, so
+  it isn't taken again on the computer. A hand-held reader later types into
+  the computer's ISBN box instead; nothing else changes.
+- **Photos for a book already in the queue** (V28): when the open book lacks
+  photos (scanned, or only its back photographed on a phone), the camera
+  says "Photos for: <title>" and takes only the sides it lacks; they're added
+  to that book and the AI reads it again (filling in only what's still
+  empty). "New book instead" makes the camera start a new book. When the
+  open book has its photos, or nothing is open, two pictures make a new book
+  as before.
+- **Same ISBN** (V28): books still to do that share an ISBN are tagged "Same
+  ISBN · n in queue"; the open one says "Another copy of this book is in the
+  queue", with a button to open the other — to keep it as a second copy, or
+  Delete a double scan.
 - **Behind the access code**, like Saved texts — the pages, the photos and
   the API (`/api/extract/bookops/…`, so the existing login cookie covers it).
 - **Stored apart from the catalog:** its own table (`bookops_books`,

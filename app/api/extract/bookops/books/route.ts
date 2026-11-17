@@ -1,5 +1,5 @@
-import { BookOpsError, createBook, listBooks, PHOTO_MAX_BYTES, type NewPhoto } from "@/lib/bookops";
-import { bookOpsRoute, ok } from "@/lib/bookops-api";
+import { BookOpsError, createBook, listBooks, PHOTO_MAX_BYTES, sameIsbnCount } from "@/lib/bookops";
+import { bookOpsRoute, ok, photo } from "@/lib/bookops-api";
 
 /**
  * BookOps' books (docs/spec-corrections.md §27). Needs the access-code login.
@@ -7,17 +7,13 @@ import { bookOpsRoute, ok } from "@/lib/bookops-api";
  *   POST  a new book, as a form: `id`, and `front` + `back` (the photos)
  *         and/or `isbn` with `isbnSource` ("barcode" read from the back
  *         photo, "typed" in the ISBN box). Stored at once; the filling-in is
- *         POST …/books/[id]/process.
+ *         POST …/books/[id]/process. Answers `sameIsbn`: how many other books
+ *         still to do have the same ISBN (another copy, or a double scan).
  */
 export async function GET(request: Request) {
   return bookOpsRoute(request, async () => ok({ books: await listBooks() }));
 }
 
-async function photo(value: FormDataEntryValue | null): Promise<NewPhoto | null> {
-  if (!value || typeof value === "string") return null;
-  if (value.size > PHOTO_MAX_BYTES) throw new BookOpsError("That photo is too large.", 413);
-  return { type: value.type, bytes: await value.arrayBuffer() };
-}
 
 export async function POST(request: Request) {
   return bookOpsRoute(request, async () => {
@@ -37,6 +33,6 @@ export async function POST(request: Request) {
       front: await photo(form.get("front")),
       back: await photo(form.get("back")),
     });
-    return ok({ book });
+    return ok({ book, sameIsbn: await sameIsbnCount(book) });
   });
 }

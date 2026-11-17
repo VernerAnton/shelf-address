@@ -19,7 +19,7 @@ import { bookOps, BookOpsApiError, readBarcode } from "@/lib/client/bookops";
 import { formatIsbn, parseIsbn } from "@/lib/isbn";
 import { PRICE_SITES, priceQuery } from "@/lib/price-sites";
 import { LoginForm } from "../_components/login-form";
-import { BookOpsCamera, type Shots } from "./bookops-camera";
+import { BookOpsCamera, type CameraTarget, type Shots } from "./bookops-camera";
 
 /** How often the list checks for news while it's on screen: a book sent from a phone, a field filled in. */
 const REFRESH_MS = 3000;
@@ -205,26 +205,37 @@ export function BookOpsScreen() {
     return () => document.removeEventListener("visibilitychange", flush);
   }, [saveNow]);
 
-  /** Both covers photographed here: store the book, open it, and let the reading start. */
-  const onBook = useCallback(
-    async ({ front, back, backCanvas }: Shots) => {
-      const id = crypto.randomUUID();
+  /**
+   * The camera's pictures. For the open book (it lacked photos): added to it,
+   * and it's read again. Otherwise: a new book, opened, and the reading starts.
+   * The barcode in a back photo gives the ISBN.
+   */
+  const onShots = useCallback(
+    async ({ targetId, front, back, backCanvas }: Shots) => {
       setAdding((n) => n + 1);
       setNotice(null);
       try {
-        const barcode = await readBarcode(backCanvas);
-        const book = await bookOps.add({ id, front, back, isbn: barcode, isbnSource: "barcode" });
-        put(book);
-        open(book.id);
-        nudge(book.id);
-        setNotice(
-          barcode
-            ? { kind: "ok", text: `Added to the queue. ISBN ${formatIsbn(barcode)} read from the barcode.` }
-            : { kind: "warn", text: "Added to the queue. No barcode found in the back photo, so the AI is looking for the ISBN." },
-        );
+        const barcode = backCanvas ? await readBarcode(backCanvas) : null;
+        if (targetId) {
+          const book = await bookOps.attach(targetId, { front, back, isbn: barcode });
+          put(book);
+          nudge(book.id);
+          const name = book.title?.trim() || "the book";
+          setNotice({ kind: "ok", text: `Photos added to ${name}. The AI is reading them.` });
+        } else {
+          const { book } = await bookOps.add({ id: crypto.randomUUID(), front, back, isbn: barcode, isbnSource: "barcode" });
+          put(book);
+          open(book.id);
+          nudge(book.id);
+          setNotice(
+            barcode
+              ? { kind: "ok", text: `Added to the queue. ISBN ${formatIsbn(barcode)} read from the barcode.` }
+              : { kind: "warn", text: "Added to the queue. No barcode found in the back photo, so the AI is looking for the ISBN." },
+          );
+        }
       } catch (e) {
         if (e instanceof BookOpsApiError && e.loggedOut) setState("login");
-        setNotice({ kind: "error", text: `That book wasn't added (${message(e).replace(/\.$/, "")}). Photograph it again.` });
+        setNotice({ kind: "error", text: `Those photos weren't saved (${message(e).replace(/\.$/, "")}). Take them again.` });
       } finally {
         setAdding((n) => n - 1);
       }
@@ -239,7 +250,7 @@ export function BookOpsScreen() {
     if (!parsed.ok) return setIsbnNote(parsed.reason);
     setIsbnNote(null);
     try {
-      const book = await bookOps.add({ id: crypto.randomUUID(), isbn: parsed.isbn13, isbnSource: "typed" });
+      const { book } = await bookOps.add({ id: crypto.randomUUID(), isbn: parsed.isbn13, isbnSource: "typed" });
       setIsbn("");
       put(book);
       open(book.id);
@@ -262,6 +273,17 @@ export function BookOpsScreen() {
 
   const book = books.find((b) => b.id === selected) ?? null;
   const todo = books.filter((b) => b.status === "draft");
+  /** Books still to do that share an ISBN: another copy, or a double scan. */
+  const sameIsbn = (b: BookOpsBook) => (b.isbn13 ? todo.filter((x) => x.isbn13 === b.isbn13) : []);
+  /** The open book, when it still lacks photos: the camera's pictures go to it. */
+  const target: CameraTarget | null =
+    book && book.status === "draft" && (!book.frontPhoto || !book.backPhoto)
+      ? {
+          id: book.id,
+          title: book.title?.trim() || (book.isbn13 ? formatIsbn(book.isbn13) : "the open book"),
+          sides: [...(book.frontPhoto ? [] : (["front"] as const)), ...(book.backPhoto ? [] : (["back"] as const))],
+        }
+      : null;
   const listed = books.filter((b) => b.status === "listed");
   const locked = book?.status === "listed";
 
@@ -339,6 +361,7 @@ export function BookOpsScreen() {
             <span className="flex flex-wrap items-center gap-1">
               <span className={`rounded-full px-2 py-px text-[11px] font-semibold ${PILL[s]}`}>{QUEUE_LABEL[s]}</span>
               {s !== "listed" && s !== "reading" && needsCheck(b) && <Tag kind="warn">Check</Tag>}
+              {s !== "listed" && sameIsbn(b).length > 1 && <Tag kind="info">Same ISBN · {sameIsbn(b).length} in queue</Tag>}
             </span>
             <span className="w-full truncate text-sm font-medium">{b.title?.trim() || (b.isbn13 ? formatIsbn(b.isbn13) : s === "reading" ? "New book" : "Untitled book")}</span>
             <span className="w-full truncate text-xs text-muted">
@@ -419,7 +442,7 @@ export function BookOpsScreen() {
               </ul>
             ) : (
               <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">
-                Nothing in the queue. Photograph a book&apos;s front and back cover with the camera, or on a phone in BookOps.
+                Nothing in the queue. Scan a barcode on a phone in BookOps, type an ISBN above, or photograph a book&apos;s front and back cover with the camera.
               </p>
             )}
           </section>
@@ -463,6 +486,22 @@ export function BookOpsScreen() {
                 </div>
               )}
             </div>
+
+            {!locked && sameIsbn(book).length > 1 && (
+              <p role="status" aria-label="Same ISBN" className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-accent/30 bg-accent/5 p-2.5 text-sm">
+                <span>
+                  {sameIsbn(book).length === 2 ? "Another copy of this book is" : `${sameIsbn(book).length - 1} other copies of this book are`} in the queue — a
+                  second copy, or scanned twice by accident?
+                </span>
+                {sameIsbn(book)
+                  .filter((x) => x.id !== book.id)
+                  .map((x, i) => (
+                    <button key={x.id} type="button" onClick={() => open(x.id)} className="font-semibold text-accent underline">
+                      Open {sameIsbn(book).length > 2 ? `copy ${i + 1}` : "the other"}
+                    </button>
+                  ))}
+              </p>
+            )}
 
             {locked && (
               <div role="status" aria-label="In the web store" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-emerald-600/30 bg-emerald-500/10 p-3 text-sm">
@@ -642,7 +681,7 @@ export function BookOpsScreen() {
         )}
 
         <aside className="flex flex-col gap-5">
-          <BookOpsCamera onBook={(shots) => void onBook(shots)} notice={notice} />
+          <BookOpsCamera target={target} onShots={(shots) => void onShots(shots)} notice={notice} />
           {book && (book.frontPhoto || book.backPhoto) && (
             <section aria-label="Photos of this book" className="flex flex-col gap-2 border-t border-line pt-4">
               <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Photos of this book</h2>

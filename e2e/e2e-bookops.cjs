@@ -125,7 +125,7 @@ const t = suite();
   await pc.getByRole("heading", { name: "BookOps" }).click();
   await pc.keyboard.press("Space");
   check("Space: front cover taken, now the back", await until(async () => /Step 2 Back cover/.test(await step())), await step());
-  check("…the front can be retaken", await visible(camera.getByRole("button", { name: "Retake the front" })));
+  check("…the photos can be retaken", await visible(camera.getByRole("button", { name: "Retake" })));
   check("nothing stored yet", rows().length === 0);
   await pc.keyboard.press("Space");
   check("Space again: the book is added, ISBN from the barcode", await visible(lastBook.getByText(/Added to the queue\. ISBN 978-951036686-8 read from the barcode/), 30000));
@@ -222,6 +222,22 @@ const t = suite();
   book = rows().find((r) => r.isbn13 === "9789510230763");
   check("…stored: typed ISBN, found, no photos, nothing for the AI", book && book.isbn_source === "typed" && book.lookup_status === "found" && book.title_source === "finna" && book.front_photo === null && book.ai_status === "none", JSON.stringify(book));
 
+  // The open book has no photos: the camera's pictures go to it.
+  const cameraTitle = () => camera.getByRole("heading").innerText().then((x) => x.replace(/\s+/g, " ").trim());
+  check("camera: photos for the open book (no photos yet)", (await cameraTitle()) === "PHOTOS FOR: Pääkallokehrääjä" || /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()), await cameraTitle());
+  check("…both sides needed", (await camera.getByRole("list", { name: "Pictures of this book" }).getByRole("listitem").count()) === 2);
+  await camera.getByRole("button", { name: "New book instead" }).click();
+  check("'New book instead': the camera makes a new book", /new book/i.test(await cameraTitle()) && await visible(camera.getByRole("button", { name: /^Photos for: Pääkallokehrääjä/ })));
+  await camera.getByRole("button", { name: /^Photos for: Pääkallokehrääjä/ }).click();
+  check("…and back to the open book", /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()));
+  const beforeAttach = rows().length;
+  await camera.getByLabel("Photo files").setInputFiles([await cover(pc, ["Pääkallokehrääjä"], "#7a2e22"), await cover(pc, ["Jännitysromaani."], "#efe6d2")]);
+  check("photos added to the open book, not a new one", await visible(lastBook.getByText(/Photos added to Pääkallokehrääjä/), 30000) && rows().length === beforeAttach);
+  book = await until(() => { const r = rows().find((x) => x.isbn13 === "9789510230763"); return r && r.ai_status === "done" ? r : null; });
+  check("…stored on it, and the AI read it: text filled in, the database's title kept", book && book.front_photo && book.back_photo && book.description === AI_TEXT && book.description_source === "ai" && book.title === "Pääkallokehrääjä" && book.title_source === "finna", JSON.stringify(book));
+  check("…the camera is back to new books", await until(async () => /new book/i.test(await cameraTitle())));
+  check("…and the book shows both photos", await until(() => photos.locator("img").count().then((n) => n === 2)));
+
   // Photo files instead of the camera; no barcode, and the AI misreads the ISBN.
   await ai("book=badisbn");
   await camera.getByLabel("Photo files").setInputFiles([await cover(pc, ["Kotimaan linnut"], "#3d5a40"), await cover(pc, ["Lintukirja kaikille."], "#efe6d2")]);
@@ -234,26 +250,48 @@ const t = suite();
   check("an ISBN typed on the book is looked up: the database's title replaces the AI's", await until(async () => (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === "Pääkallokehrääjä"));
   book = rows().at(-1);
   check("…stored", book.isbn13 === "9789510230763" && book.isbn_source === "you" && book.title_source === "finna" && book.lookup_status === "found");
+  check("two books with the same ISBN: both tagged in the queue", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n === 2)));
+  const same = bookBox.getByRole("status", { name: "Same ISBN" });
+  check("…and the open one says so, with a way to the other", await visible(same.getByText(/Another copy of this book is in the queue/)));
+  const thisId = book.id;
+  await same.getByRole("button", { name: "Open the other" }).click();
+  check("…which opens it", await until(async () => (await bookBox.getByLabel("Publisher").inputValue()) === "WSOY") && (await queue.locator("[aria-current=true]").count()) === 1 && rows().find((r) => r.id === thisId));
 
-  // A phone as the camera: the book appears on the computer by itself.
-  await ai("book=isbn");
+  // The phone is the hand-held scanner: each barcode is a new book on the computer.
   await page.goto("/extract/bookops");
   check("phone: asks for the access code", await visible(page.getByRole("form", { name: "AI reading login" }).getByText("BookOps needs the access code")));
-  await logIn(page);
-  check("phone: no camera column, two photo buttons", await visible(page.getByRole("button", { name: /Photograph the front cover/ })) && (await page.getByRole("region", { name: "Camera" }).count()) === 0);
   const before = rows().length;
   const openTitle = await bookBox.getByLabel("Title", { exact: true }).inputValue();
-  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Pääkallokehrääjä"], "#7a2e22"));
-  check("phone: front taken, nothing sent yet", await visible(page.getByRole("button", { name: /Front cover ✓/ })) && rows().length === before);
-  await page.getByLabel("Back cover photo").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
-  check("phone: both taken — sent by itself", await visible(page.getByRole("region", { name: "Sent to the computer" }).getByText(/Book sent/), 30000) && await visible(page.getByRole("button", { name: /Photograph the front cover/ })));
-  book = await until(() => { const r = rows().at(-1); return rows().length === before + 1 && r.ai_status === "done" && r.lookup_status !== "pending" ? r : null; });
-  check("the AI read the printed ISBN (10 digits, made 13), and the database knew it", book && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.lookup_status === "found", JSON.stringify(book));
-  check("…so the database's title replaced the AI's", book && book.title === "Pääkallokehrääjä" && book.title_source === "finna" && book.description_source === "ai");
-  check("computer: the phone's book appears without reloading", await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 1})` }), 15000));
+  await logIn(page);
+  check("phone: a live barcode scanner, no desktop camera column", await visible(page.getByRole("region", { name: "Camera scanner" })) && (await page.getByRole("region", { name: "Camera", exact: true }).count()) === 0);
+  const phoneList = page.getByRole("region", { name: "Sent to the computer" });
+  check("phone: the barcode in view is sent by itself", await visible(phoneList.getByText(/ISBN 978-951036686-8/), 30000));
+  check("…already in the queue: says another copy was added", await visible(phoneList.getByText(/Already in the queue — added another copy/), 15000));
+  check("…no database knows it: says so", await visible(phoneList.getByText("No title found — add it on the computer"), 20000));
+  await sleep(3000);
+  const scanned = rows().filter((r) => r.isbn13 === "9789510366868");
+  check("one book per scan, not one per camera frame", rows().length === before + 1 && scanned.length === 2, JSON.stringify(scanned.map((r) => r.id)));
+  const fresh = scanned.find((r) => !r.front_photo);
+  check("…stored: ISBN from the barcode, no photos, nothing for the AI", fresh && fresh.isbn_source === "barcode" && fresh.back_photo === null && fresh.ai_status === "none" && fresh.lookup_status === "not_found", JSON.stringify(fresh));
+  check("computer: the scanned book appears without reloading", await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 1})` }), 15000));
   check("…without taking the open book away", (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === openTitle);
+  check("…tagged as the same ISBN as the other copy", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n >= 2)));
+
+  // No barcode: the back cover photographed on the phone is the book, and its back cover.
+  await ai("book=isbn");
+  await page.getByLabel("Back cover photo").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
+  check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 30000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/)));
+  book = await until(() => { const r = rows().at(-1); return rows().length === before + 2 && r.ai_status === "done" && r.lookup_status === "found" ? r : null; });
+  check("…stored: the photo as the back cover, ISBN read by the AI (10 digits, made 13), title from the database", book && book.back_photo && !book.front_photo && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.title_source === "finna" && book.description_source === "ai", JSON.stringify(book));
+  await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 2})` }), 15000);
   await pc.getByRole("region", { name: "To do" }).getByRole("button").first().click();
-  check("…its ISBN marked as read by the AI", await visible(bookBox.getByText(/ISBN 978-951023076-3/)) && await visible(bookBox.getByText("AI read it · check")));
+  check("computer: opened, its ISBN marked as read by the AI", await visible(bookBox.getByText(/ISBN 978-951023076-3/)) && await visible(bookBox.getByText("AI read it · check")));
+  check("…the camera asks only for the front cover", /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()) && (await camera.getByRole("list", { name: "Pictures of this book" }).getByRole("listitem").allInnerTexts()).join("|").replace(/\s+/g, " ").trim() === "Still needed Front cover");
+  const backKey = book.back_photo;
+  await pc.getByRole("heading", { name: "BookOps" }).click();
+  await pc.keyboard.press("Space");
+  check("one picture: the front added to that book", await until(() => { const r = rows().find((x) => x.id === book.id); return r.front_photo && r.back_photo === backKey; }) && rows().length === before + 2);
+  check("…the camera is back to new books", await until(async () => /new book/i.test(await cameraTitle())));
 
   // Stops by itself after 10 minutes without a picture.
   const idle = await pcCtx.newPage();

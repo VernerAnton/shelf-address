@@ -163,6 +163,8 @@ export function BookOpsPhone() {
     setShooting({ kind: "noBarcode", id: null, title: "New listing — a book without a barcode", isbn13: null, need: ["back"], shots: {}, state: "taking" });
 
   const sendPhotos = async (s: Shooting) => {
+    // The book is still in hand when the scanner comes back: its barcode is ignored a while.
+    if (s.isbn13) quietRef.current = { isbn: s.isbn13, until: quietUntil() };
     setShooting({ ...s, state: "sending", error: undefined });
     try {
       const barcode = !s.isbn13 && s.shots.back ? await readBarcode(s.shots.back.canvas) : null;
@@ -235,7 +237,7 @@ export function BookOpsPhone() {
         </p>
       )}
 
-      <CameraScanner disabled={shooting?.state === "taking"} autoStart onIsbn={onIsbn} />
+      <CameraScanner disabled={Boolean(shooting)} autoStart onIsbn={onIsbn} />
 
       {sent.length > 0 && (
         <section aria-label="Sent to the computer" className="flex flex-col gap-2">

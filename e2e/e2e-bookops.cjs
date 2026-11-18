@@ -327,19 +327,28 @@ const t = suite();
   check("…without taking the open book away", (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === openTitle);
   check("…tagged as the same ISBN as the other copy", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n >= 2)));
 
-  // Photos on the phone: the scanned listing is under "Needs photos"; front, then back.
+  // Photos on the phone: the scanned listing is under "Needs photos"; BookOps' own camera, back then front.
   const needsPhotos = page.getByRole("region", { name: "Needs photos" });
   check("phone: right after a scan, 'Add photos now'", await visible(phoneList.getByRole("button", { name: "Add photos now" }), 15000));
   const needRow = needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8.*Back and front cover/s });
-  check("phone: the scanned listing is under Needs photos, front and back", await visible(needRow, 15000));
+  check("phone: the scanned listing is under Needs photos, back and front", await visible(needRow, 15000));
   await needRow.click();
   const taking = page.getByRole("region", { name: "Taking photos" });
-  check("tap: photos for that listing, the scanner paused", await visible(taking.getByText(/Photos for:/)) && await visible(page.getByRole("button", { name: "Scan with camera" })));
-  await page.getByLabel("Back cover photo", { exact: true }).setInputFiles(await cover(page, ["Takakansi."], "#efe6d2"));
-  check("back cover first (the barcode side): now the front", await visible(taking.getByRole("button", { name: /Back cover ✓/ })) && await visible(taking.getByRole("button", { name: /Now the front cover/ })) && !rows().find((r) => r.id === fresh.id).back_photo);
+  const stepText = () => taking.getByRole("status", { name: "Step" }).evaluate((el) => [...el.children].map((c) => c.textContent.trim()).join(" "));
+  const shutter = taking.getByRole("button", { name: "Take picture" });
+  check("tap: BookOps' camera, full screen, for that listing", await visible(taking.getByText(/Photos for: ISBN 978-951036686-8/)) && await taking.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top === 0 && r.height === innerHeight; }));
+  check("…step 1 of 2 on screen: back cover, the barcode side", (await stepText()) === "1 of 2 Back cover The side with the barcode", await stepText());
+  check("…the scanner paused", await visible(page.getByRole("button", { name: "Scan with camera" })));
+  check("…the camera live, the shutter ready", await until(() => shutter.isEnabled()));
+  await shutter.click();
+  check("shutter: back taken, on to the front by itself", await until(async () => (await stepText()) === "2 of 2 Turn the book over: front cover This is the listing's picture") && await visible(taking.getByRole("img", { name: "Back cover taken" })) && !rows().find((r) => r.id === fresh.id).back_photo, await stepText());
+  await taking.getByRole("button", { name: "Retake" }).click();
+  check("Retake: back to the back cover", (await stepText()) === "1 of 2 Back cover The side with the barcode" && (await taking.getByRole("img", { name: "Back cover taken" }).count()) === 0);
+  await shutter.click();
+  await until(async () => /^2 of 2/.test(await stepText()));
   await ai("book=plain");
-  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Kansi"], "#2f5d7c"));
-  check("front taken: both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
+  await shutter.click();
+  check("front taken: the camera closes, both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
   book = await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.ai_status === "done" ? r : null; });
   check("…the AI read them: text filled in, its title too (no database knew it)", book && book.description === AI_TEXT && book.title === "Tuntematon sotilas" && book.title_source === "ai" && rows().length === before + 1, JSON.stringify(book));
   await sleep(4000);
@@ -350,7 +359,13 @@ const t = suite();
 
   // No barcode: the back cover photographed on the phone is the book, and its back cover.
   await ai("book=isbn");
-  await page.getByLabel("Back cover photo, no barcode").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
+  await page.getByRole("button", { name: "No barcode? Photograph the back cover" }).click();
+  check("no barcode: the camera for one photo, the back cover", await visible(taking.getByText("New listing — a book without a barcode")) && /^Photo Back cover/.test(await stepText()));
+  // The phone's camera app instead: one tap away, its photo counts as the step.
+  const chooser = page.waitForEvent("filechooser");
+  await taking.getByRole("button", { name: /Use the phone's camera app instead/ }).click();
+  await (await chooser).setFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
+  check("…the camera app's photo is used, and the camera closes", await gone(taking, 15000));
   check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 30000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/)));
   book = await until(() => { const r = rows().at(-1); return rows().length === before + 2 && r.ai_status === "done" && r.lookup_status === "found" ? r : null; });
   check("phone: that listing is under Needs photos, front still needed", await visible(page.getByRole("region", { name: "Needs photos" }).getByRole("button", { name: /Pääkallokehrääjä.*Front cover still needed/s }), 15000));

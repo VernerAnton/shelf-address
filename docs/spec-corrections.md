@@ -672,6 +672,14 @@ First version, to try the way of working before any equipment is bought.
   camera closes and the photos are sent. "Use the phone's camera app
   instead" is one tap away, for that step. The same camera takes a no-barcode
   back cover.
+- **The frame is what's saved** (V32.4): the photo is cut to the dotted
+  frame (`frameInPhoto`, `lib/client/bookops.ts`), mapping it through the
+  live picture's object-fit and, where the still photo is another shape
+  (4:3 photo, 16:9 live picture), through the live picture's place in the
+  middle of it. Outside the frame is dimmed. A camera-app photo isn't cut.
+  **The scanner's controls** — light, zoom, lens — are on BookOps' camera
+  too, remembered on the phone apart from the scanner's (starting from the
+  scanner's lens).
 - **The computer's camera is off by default** (V31): the camera column is
   replaced by a note on where the photos come from, and "Use the computer's
   camera" brings it back (remembered on that computer). Each listing shows

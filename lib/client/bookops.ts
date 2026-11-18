@@ -208,3 +208,63 @@ export const bookOps = {
   send: (id: string) => call<One>(`/books/${id}/send`, { method: "POST" }).then((r) => r.book),
   takeBack: (id: string) => call<One>(`/books/${id}/send`, { method: "DELETE" }).then((r) => r.book),
 };
+
+/** A rectangle in pixels. */
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/**
+ * Where the on-screen frame is in a photo (docs/spec-corrections.md §27), so
+ * the photo can be cut to it: what's inside the dotted frame is what's saved.
+ *
+ * - `box`: the area the live picture fills on screen (CSS px), shown with
+ *   object-fit: cover (its edges may be cut off);
+ * - `frame`: the dotted frame, in the same CSS px, relative to the box;
+ * - `video`: the live picture's size; `photo`: the photo's size.
+ *
+ * A phone's still photo can be a different shape than its live picture (a
+ * 4:3 sensor photo, a 16:9 live picture): the live picture is then the middle
+ * of the photo, and the frame is mapped through that. Returns null when the
+ * photo is turned the other way from the live picture (can't be matched).
+ */
+export function frameInPhoto(
+  box: { width: number; height: number },
+  frame: Rect,
+  video: { width: number; height: number },
+  photo: { width: number; height: number },
+): Rect | null {
+  if ((video.width > video.height) !== (photo.width > photo.height) && Math.abs(video.width / video.height - 1) > 0.05) return null;
+  // The live picture on screen (cover): scale and the part cut off each side.
+  const scale = Math.max(box.width / video.width, box.height / video.height);
+  const ox = (box.width - video.width * scale) / 2;
+  const oy = (box.height - video.height * scale) / 2;
+  // The frame as fractions of the live picture, kept inside it.
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const u0 = clamp((frame.x - ox) / scale / video.width);
+  const v0 = clamp((frame.y - oy) / scale / video.height);
+  const u1 = clamp((frame.x + frame.width - ox) / scale / video.width);
+  const v1 = clamp((frame.y + frame.height - oy) / scale / video.height);
+  // The live picture's part of the photo: all of it, or its middle if the shapes differ.
+  const va = video.width / video.height;
+  const pa = photo.width / photo.height;
+  let px = 0;
+  let py = 0;
+  let pw = photo.width;
+  let ph = photo.height;
+  if (pa < va) {
+    ph = photo.width / va;
+    py = (photo.height - ph) / 2;
+  } else if (pa > va) {
+    pw = photo.height * va;
+    px = (photo.width - pw) / 2;
+  }
+  return { x: px + u0 * pw, y: py + v0 * ph, width: (u1 - u0) * pw, height: (v1 - v0) * ph };
+}
+
+/** The part of `canvas` inside `rect`, as a new canvas. */
+export function cropCanvas(canvas: HTMLCanvasElement, rect: Rect): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(rect.width));
+  out.height = Math.max(1, Math.round(rect.height));
+  out.getContext("2d")?.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, out.width, out.height);
+  return out;
+}

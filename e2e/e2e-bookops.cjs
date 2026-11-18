@@ -337,13 +337,15 @@ const t = suite();
   const stepText = () => taking.getByRole("status", { name: "Step" }).evaluate((el) => [...el.children].map((c) => c.textContent.trim()).join(" "));
   const shutter = taking.getByRole("button", { name: "Take picture" });
   check("tap: BookOps' camera, full screen, for that listing", await visible(taking.getByText(/Photos for: ISBN 978-951036686-8/)) && await taking.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top === 0 && r.height === innerHeight; }));
-  check("…step 1 of 2 on screen: back cover, the barcode side", (await stepText()) === "1 of 2 Back cover The side with the barcode", await stepText());
+  check("…step 1 of 2 on screen: back cover, the barcode side", (await stepText()) === "1 of 2 Back cover The side with the barcode · fill the frame with the book", await stepText());
   check("…the scanner paused", await visible(page.getByRole("button", { name: "Scan with camera" })));
   check("…the camera live, the shutter ready", await until(() => shutter.isEnabled()));
+  // The dotted frame's shape: the saved photos must have it (what's inside the frame is what's saved).
+  const frameAspect = await taking.evaluate((el) => { const r = el.querySelector(".border-dashed").getBoundingClientRect(); return r.width / r.height; });
   await shutter.click();
-  check("shutter: back taken, on to the front by itself", await until(async () => (await stepText()) === "2 of 2 Turn the book over: front cover This is the listing's picture") && await visible(taking.getByRole("img", { name: "Back cover taken" })) && !rows().find((r) => r.id === fresh.id).back_photo, await stepText());
+  check("shutter: back taken, on to the front by itself", await until(async () => (await stepText()) === "2 of 2 Turn the book over: front cover This is the listing's picture · fill the frame with the book") && await visible(taking.getByRole("img", { name: "Back cover taken" })) && !rows().find((r) => r.id === fresh.id).back_photo, await stepText());
   await taking.getByRole("button", { name: "Retake" }).click();
-  check("Retake: back to the back cover", (await stepText()) === "1 of 2 Back cover The side with the barcode" && (await taking.getByRole("img", { name: "Back cover taken" }).count()) === 0);
+  check("Retake: back to the back cover", (await stepText()) === "1 of 2 Back cover The side with the barcode · fill the frame with the book" && (await taking.getByRole("img", { name: "Back cover taken" }).count()) === 0);
   await shutter.click();
   await until(async () => /^2 of 2/.test(await stepText()));
   await ai("book=plain");
@@ -356,6 +358,8 @@ const t = suite();
   check("…and it's off the Needs photos list", await until(async () => (await needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8/ }).count()) === 0));
   await pc.getByRole("region", { name: "To do" }).getByRole("button", { name: /Tuntematon sotilas/ }).first().click();
   check("computer: the phone's photos and text show on the listing", await until(async () => (await bookBox.getByLabel("Description").inputValue()) === AI_TEXT) && await until(() => photos.locator("img").count().then((n) => n === 2)));
+  const shapes = await until(() => photos.locator("img").evaluateAll((imgs) => (imgs.every((i) => i.complete && i.naturalWidth) ? imgs.map((i) => i.naturalWidth / i.naturalHeight) : null)));
+  check("…cut to the dotted frame: the photos have its shape", shapes && shapes.every((a) => Math.abs(a - frameAspect) < 0.03), JSON.stringify({ shapes, frameAspect }));
 
   // No barcode: the back cover photographed on the phone is the book, and its back cover.
   await ai("book=isbn");

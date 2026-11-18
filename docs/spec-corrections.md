@@ -662,6 +662,16 @@ First version, to try the way of working before any equipment is bought.
   set on the computer. The scanner pauses while photos are taken, and for
   15 s after they're sent it ignores that book's barcode, so the book still
   in hand isn't added again.
+- **BookOps' own camera on the phone** (V32.2): instead of handing off to
+  the phone's camera app, photos are taken full screen inside the app
+  (`phone-camera.tsx`), with the step over the picture — "1 of 2 · Back
+  cover · The side with the barcode", then by itself "2 of 2 · Turn the book
+  over: front cover" — one big shutter, Retake, the light where the phone
+  has one, and Cancel. The photo is a full-size still where the browser can
+  take one (ImageCapture), else the live picture. After the last side the
+  camera closes and the photos are sent. "Use the phone's camera app
+  instead" is one tap away, for that step. The same camera takes a no-barcode
+  back cover.
 - **The computer's camera is off by default** (V31): the camera column is
   replaced by a note on where the photos come from, and "Use the computer's
   camera" brings it back (remembered on that computer). Each listing shows

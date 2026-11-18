@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CameraScanner } from "@/app/scan/_components/camera-scanner";
 import { CameraIcon, CheckIcon } from "@/components/icons";
 import type { BookOpsBook } from "@/lib/bookops-model";
-import { claimCamera } from "@/lib/client/camera";
-import { bookOps, BookOpsApiError, canvasOfFile, readBarcode, toJpeg } from "@/lib/client/bookops";
+import { bookOps, BookOpsApiError, readBarcode } from "@/lib/client/bookops";
 import { formatIsbn } from "@/lib/isbn";
 import { LoginForm } from "../_components/login-form";
+import { PhoneCamera, type Shot, type Side } from "./phone-camera";
 
 /** How often the "Needs photos" list checks for news while it's on screen. */
 const REFRESH_MS = 4000;
@@ -38,15 +38,17 @@ type Sent = {
   retry?: { isbn?: string; back?: Blob };
 };
 
-type Side = "front" | "back";
-type Shot = { blob: Blob; url: string; canvas: HTMLCanvasElement };
-/** Photos being taken for one listing: the sides it lacks, and those taken so far. */
+/**
+ * Photos being taken: for a listing (the sides it lacks), or a new listing
+ * from a back cover without a barcode. "taking": the camera is open;
+ * "sending"/"failed": the photos are on their way to the listing.
+ */
 type Shooting = {
-  id: string;
+  kind: "listing" | "noBarcode";
+  /** The listing (kind "listing"). */
+  id: string | null;
   title: string;
   isbn13: string | null;
-  /** No ISBN yet: the barcode in the back photo can give it. */
-  needsIsbn: boolean;
   need: Side[];
   shots: Partial<Record<Side, Shot>>;
   state: "taking" | "sending" | "failed";
@@ -67,24 +69,17 @@ const missing = (b: BookOpsBook): Side[] => [...(b.backPhoto ? [] : (["back"] as
  *   title arrives from the book databases within seconds.
  * - **Photos**: every listing still lacking its front or back photo is under
  *   "Needs photos" (scanned here, typed on the computer, or from a hand-held
- *   reader). Tap one: the phone's own camera app takes the front cover, then
- *   the back; they go to that listing, and the AI reads the back-cover text.
+ *   reader). Tap one: BookOps' own camera opens full screen with the step on
+ *   it — back cover, then the front by itself (phone-camera.tsx); they go to
+ *   that listing, and the AI reads the back-cover text.
  * - **No barcode**: photograph the back cover — the AI reads the printed ISBN,
  *   and the photo is kept as the listing's back cover.
  */
 export function BookOpsPhone() {
-  const noBarcodeRef = useRef<HTMLInputElement>(null);
-  const frontInput = useRef<HTMLInputElement>(null);
-  const backInput = useRef<HTMLInputElement>(null);
-  const inputRef = { front: frontInput, back: backInput };
-  /** Hands the camera back to the scanner once the phone's camera app is done. */
-  const releaseRef = useRef<(() => void) | null>(null);
   const [login, setLogin] = useState<"loading" | "needed" | "ok" | "offline">("loading");
   const [sent, setSent] = useState<Sent[]>([]);
   const [books, setBooks] = useState<BookOpsBook[]>([]);
   const [shooting, setShooting] = useState<Shooting | null>(null);
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [photoError, setPhotoError] = useState<string | null>(null);
   /** Listings whose photos were just sent from here: kept off "Needs photos" until the list catches up. */
   const [justSent, setJustSent] = useState<string[]>([]);
   /** The ISBN of the book just photographed, ignored by the scanner until `until`. */
@@ -157,82 +152,37 @@ export function BookOpsPhone() {
     [send],
   );
 
-  /** The phone's own camera app (best focus and sharpness). The scanner lets go of the camera meanwhile. */
-  const openCamera = (input: HTMLInputElement | null) => {
-    if (!input) return;
-    releaseRef.current?.();
-    releaseRef.current = claimCamera();
-    input.click();
-  };
-  const cameraDone = () => {
-    releaseRef.current?.();
-    releaseRef.current = null;
-  };
-
-  /** No barcode: the back cover's photo is the book — the AI reads its printed ISBN, and it's kept as the back cover. */
-  const onNoBarcodePhoto = async (file: File | undefined) => {
-    cameraDone();
-    if (!file) return;
-    setPhotoBusy(true);
-    setPhotoError(null);
-    try {
-      const canvas = await canvasOfFile(file);
-      const [back, barcode] = await Promise.all([toJpeg(canvas), readBarcode(canvas)]);
-      const entry: Sent = { id: crypto.randomUUID(), how: "photo", isbn13: barcode, title: null, author: null, sameIsbn: 0, finished: false, state: "sending", retry: { back, isbn: barcode ?? undefined } };
-      setSent((all) => [entry, ...all]);
-      void send(entry);
-    } catch {
-      setPhotoError("Couldn't open that photo. Try again.");
-    } finally {
-      setPhotoBusy(false);
-      if (noBarcodeRef.current) noBarcodeRef.current.value = "";
-    }
-  };
-
-  /** Photos for a listing: the camera app opens straight away for the first side it lacks. */
+  /** Photos for a listing: BookOps' camera opens for the sides it lacks, back cover first. */
   const startPhotos = (book: Pick<BookOpsBook, "id" | "title" | "isbn13">, need: Side[]) => {
     if (!need.length) return;
-    setShooting({ id: book.id, title: nameOf(book), isbn13: book.isbn13, needsIsbn: !book.isbn13, need, shots: {}, state: "taking" });
-    openCamera(inputRef[need[0]].current);
+    setShooting({ kind: "listing", id: book.id, title: `Photos for: ${nameOf(book)}`, isbn13: book.isbn13, need, shots: {}, state: "taking" });
   };
+
+  /** No barcode: the back cover's photo is the book — the AI reads its printed ISBN, and it's kept as its back cover. */
+  const startNoBarcode = () =>
+    setShooting({ kind: "noBarcode", id: null, title: "New listing — a book without a barcode", isbn13: null, need: ["back"], shots: {}, state: "taking" });
 
   const sendPhotos = async (s: Shooting) => {
     setShooting({ ...s, state: "sending", error: undefined });
     try {
-      const isbn = s.needsIsbn && s.shots.back ? await readBarcode(s.shots.back.canvas) : null;
-      await bookOps.attach(s.id, { front: s.shots.front?.blob, back: s.shots.back?.blob, isbn });
-      const photographed = s.isbn13 ?? isbn;
+      const barcode = !s.isbn13 && s.shots.back ? await readBarcode(s.shots.back.canvas) : null;
+      if (s.kind === "noBarcode") {
+        const entry: Sent = { id: crypto.randomUUID(), how: "photo", isbn13: barcode, title: null, author: null, sameIsbn: 0, finished: false, state: "sending", retry: { back: s.shots.back!.blob, isbn: barcode ?? undefined } };
+        setSent((all) => [entry, ...all]);
+        void send(entry);
+      } else {
+        await bookOps.attach(s.id!, { front: s.shots.front?.blob, back: s.shots.back?.blob, isbn: barcode });
+        setJustSent((all) => [...all, s.id!]);
+        void bookOps.process(s.id!).then(() => load(), () => {});
+        void load();
+      }
+      const photographed = s.isbn13 ?? barcode;
       if (photographed) quietRef.current = { isbn: photographed, until: quietUntil() };
       Object.values(s.shots).forEach((x) => URL.revokeObjectURL(x.url));
-      setJustSent((all) => [...all, s.id]);
       setShooting(null);
-      void bookOps.process(s.id).then(() => load(), () => {});
-      void load();
     } catch (e) {
       if (e instanceof BookOpsApiError && e.loggedOut) setLogin("needed");
       setShooting({ ...s, state: "failed", error: e instanceof Error ? e.message.replace(/\.$/, "") : "it failed" });
-    }
-  };
-
-  const onSidePhoto = async (side: Side, file: File | undefined) => {
-    cameraDone();
-    const input = inputRef[side].current;
-    if (!file || !shooting) {
-      if (input) input.value = "";
-      return;
-    }
-    try {
-      const canvas = await canvasOfFile(file);
-      const blob = await toJpeg(canvas);
-      const before = shooting.shots[side];
-      if (before) URL.revokeObjectURL(before.url);
-      const next: Shooting = { ...shooting, shots: { ...shooting.shots, [side]: { blob, url: URL.createObjectURL(blob), canvas } } };
-      if (next.need.every((x) => next.shots[x])) await sendPhotos(next);
-      else setShooting(next);
-    } catch {
-      setShooting({ ...shooting, state: "failed", error: "Couldn't open that photo" });
-    } finally {
-      if (input) input.value = "";
     }
   };
 
@@ -240,17 +190,6 @@ export function BookOpsPhone() {
     if (shooting) Object.values(shooting.shots).forEach((x) => URL.revokeObjectURL(x.url));
     setShooting(null);
   };
-
-  // The camera app closed without a photo ("cancel" isn't in React's props): give the camera back to the scanner.
-  useEffect(() => {
-    const inputs = [noBarcodeRef.current, frontInput.current, backInput.current].filter((x): x is HTMLInputElement => Boolean(x));
-    const done = () => {
-      releaseRef.current?.();
-      releaseRef.current = null;
-    };
-    inputs.forEach((x) => x.addEventListener("cancel", done));
-    return () => inputs.forEach((x) => x.removeEventListener("cancel", done));
-  }, [login]);
 
   if (login === "loading") return <p className="text-muted">Loading…</p>;
   if (login === "offline") return <p className="text-muted">No connection. BookOps needs signal to send books to the computer.</p>;
@@ -264,73 +203,30 @@ export function BookOpsPhone() {
 
   return (
     <>
-      {/* The phone's camera app, one input per side (and one for a book without a barcode). */}
-      {(["front", "back"] as const).map((side) => (
-        <input
-          key={side}
-          ref={inputRef[side]}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          aria-label={`${SIDE_NAME[side]} photo`}
-          tabIndex={-1}
-          onChange={(e) => void onSidePhoto(side, e.target.files?.[0])}
-        />
-      ))}
+      {shooting?.state === "taking" && (
+        <PhoneCamera title={shooting.title} sides={shooting.need} onDone={(shots) => void sendPhotos({ ...shooting, shots })} onCancel={cancelPhotos} />
+      )}
 
-      {shooting ? (
-        <section aria-label="Taking photos" className="flex flex-col gap-3 rounded-xl border-2 border-accent bg-surface p-3">
-          <h2 className="text-base font-semibold">
-            Photos for: <span className="font-normal">{shooting.title}</span>
-          </h2>
-          <ol className={`grid gap-2 ${shooting.need.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}>
-            {shooting.need.map((side) => {
-              const shot = shooting.shots[side];
-              const next = !shot && shooting.need.find((x) => !shooting.shots[x]) === side;
-              return (
-                <li key={side}>
-                  <button
-                    type="button"
-                    disabled={shooting.state === "sending"}
-                    onClick={() => openCamera(inputRef[side].current)}
-                    className={`${button} h-20 w-full flex-col gap-1 border text-sm ${next ? "border-accent bg-accent text-accent-contrast" : "border-line"}`}
-                  >
-                    {shot ? (
-                      <>
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={shot.url} alt="" className="h-10 w-8 rounded object-cover" />
-                        {SIDE_NAME[side]} ✓
-                      </>
-                    ) : (
-                      <>
-                        <CameraIcon className="size-6" />
-                        {next && Object.keys(shooting.shots).length ? `Now the ${SIDE_NAME[side].toLowerCase()}` : SIDE_NAME[side]}
-                      </>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-          {shooting.state === "sending" && (
-            <p role="status" className="text-center text-sm text-muted">
+      {shooting && shooting.state !== "taking" ? (
+        <section aria-label="Sending photos" className="flex flex-col gap-2 rounded-xl border-2 border-accent bg-surface p-3 text-sm">
+          <p className="font-semibold">{shooting.title}</p>
+          {shooting.state === "sending" ? (
+            <p role="status" className="text-muted">
               Sending the photos…
             </p>
-          )}
-          {shooting.state === "failed" && (
-            <div role="alert" className="flex flex-col gap-2 text-sm text-danger">
+          ) : (
+            <div role="alert" className="flex flex-col gap-2 text-danger">
               Not sent ({shooting.error}).
-              {shooting.need.every((x) => shooting.shots[x]) && (
-                <button type="button" onClick={() => void sendPhotos(shooting)} className={`${button} h-11 bg-accent text-accent-contrast`}>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void sendPhotos(shooting)} className={`${button} h-11 flex-1 bg-accent text-accent-contrast`}>
                   Send again
                 </button>
-              )}
+                <button type="button" onClick={cancelPhotos} className={`${button} h-11 border border-line px-4 text-foreground`}>
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
-          <button type="button" onClick={cancelPhotos} disabled={shooting.state === "sending"} className="h-10 text-sm text-muted">
-            Cancel
-          </button>
         </section>
       ) : (
         <p className="text-sm text-muted">
@@ -339,7 +235,7 @@ export function BookOpsPhone() {
         </p>
       )}
 
-      <CameraScanner disabled={Boolean(shooting)} autoStart onIsbn={onIsbn} />
+      <CameraScanner disabled={shooting?.state === "taking"} autoStart onIsbn={onIsbn} />
 
       {sent.length > 0 && (
         <section aria-label="Sent to the computer" className="flex flex-col gap-2">
@@ -434,33 +330,13 @@ export function BookOpsPhone() {
       </section>
 
       <section aria-label="No barcode" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
-        <input
-          ref={noBarcodeRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          aria-label="Back cover photo, no barcode"
-          tabIndex={-1}
-          onChange={(e) => void onNoBarcodePhoto(e.target.files?.[0])}
-        />
-        <button
-          type="button"
-          disabled={photoBusy || Boolean(shooting)}
-          onClick={() => openCamera(noBarcodeRef.current)}
-          className={`${button} h-12 border border-line`}
-        >
+        <button type="button" disabled={Boolean(shooting)} onClick={startNoBarcode} className={`${button} h-12 border border-line`}>
           <CameraIcon className="size-5" />
-          {photoBusy ? "Preparing the photo…" : "No barcode? Photograph the back cover"}
+          No barcode? Photograph the back cover
         </button>
         <p className="text-xs text-muted">
           A new listing: the AI reads the ISBN printed on the back cover, and the photo is kept as its back cover.
         </p>
-        {photoError && (
-          <p role="alert" className="text-sm text-danger">
-            {photoError}
-          </p>
-        )}
       </section>
     </>
   );

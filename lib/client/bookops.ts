@@ -90,7 +90,7 @@ export function frameOf(video: HTMLVideoElement, view: CameraView = DEFAULT_VIEW
 }
 
 /** A photo file (from the phone's camera app, or chosen on the computer), ready to work on. */
-export async function canvasOfFile(file: File): Promise<HTMLCanvasElement> {
+export async function canvasOfFile(file: Blob): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(file);
   try {
     return canvasOf(bitmap, bitmap.width, bitmap.height, WORK_SIDE);

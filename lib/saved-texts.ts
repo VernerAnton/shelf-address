@@ -3,7 +3,8 @@ import { getDb } from "@/lib/cloudflare";
 /**
  * Saved texts (docs/spec-corrections.md §24): Extract's texts, kept so the
  * computer can pick them up. Only reachable with the access-code login
- * (the API routes check it). Deleted 30 days after their last change.
+ * (the API routes check it). Deleted 7 days after their last change
+ * (30 until V27).
  */
 
 export type SavedText = {
@@ -26,7 +27,7 @@ export class SavedTextError extends Error {
   }
 }
 
-const KEEP_DAYS = 30;
+const KEEP_DAYS = 7;
 export const TEXT_MAX = 20000;
 
 type Row = {

@@ -190,7 +190,7 @@ export function SavedTexts() {
     <>
       <p className="text-sm text-muted">
         Texts read in <Link href="/extract" className="font-medium text-accent">Extract</Link> on a logged-in phone appear here by
-        themselves. Kept for 30 days after their last change.
+        themselves. Kept for 7 days after their last change.
       </p>
 
       {texts.length === 0 ? (
@@ -199,19 +199,23 @@ export function SavedTexts() {
         </p>
       ) : (
         <div className="md:grid md:grid-cols-[20rem_1fr] md:items-start md:gap-6">
-          <div aria-label="Saved texts" className={`flex flex-col gap-6 ${text ? "hidden md:flex" : ""}`}>
-            <section aria-label="To do" className="flex flex-col gap-2">
+          {/* On a computer the list fits the window and scrolls inside itself, so the page doesn't (V27). */}
+          <div
+            aria-label="Saved texts"
+            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-18rem)] ${text ? "hidden md:flex" : ""}`}
+          >
+            <section aria-label="To do" className="flex min-h-0 flex-col gap-2">
               <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
               {todo.length ? (
-                <ul className="overflow-hidden rounded-xl border border-line bg-surface">{todo.map(row)}</ul>
+                <ul className="min-h-0 overflow-hidden rounded-xl border border-line bg-surface md:overflow-y-auto">{todo.map(row)}</ul>
               ) : (
                 <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">Nothing left to do.</p>
               )}
             </section>
             {done.length > 0 && (
-              <section aria-label="Done" className="flex flex-col gap-2">
+              <section aria-label="Done" className="flex min-h-0 flex-col gap-2 md:max-h-[45%]">
                 <h2 className="px-1 text-sm font-semibold text-muted">✓ Done ({done.length})</h2>
-                <ul className="overflow-hidden rounded-xl border border-line bg-surface opacity-60">{done.map(row)}</ul>
+                <ul className="min-h-0 overflow-hidden rounded-xl border border-line bg-surface opacity-60 md:overflow-y-auto">{done.map(row)}</ul>
               </section>
             )}
           </div>
@@ -236,7 +240,7 @@ export function SavedTexts() {
                 lang="fi"
                 spellCheck
                 rows={14}
-                className="min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:text-lg"
+                className="min-h-72 w-full resize-y rounded-xl md:h-[calc(100dvh-25rem)] md:min-h-48 border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:text-lg"
               />
               <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
                 {draft?.id === text.id

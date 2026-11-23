@@ -533,7 +533,7 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   Refreshes every 5 s while on screen, so a text read on a phone appears
   within seconds. On a big screen the list and the text sit side by side; on
   a phone, the list, and a tap opens one.
-- Texts are deleted 30 days after their last change.
+- Texts are deleted 7 days after their last change (30 until V27).
 
 ## 25. A computer opens on Saved texts.
 

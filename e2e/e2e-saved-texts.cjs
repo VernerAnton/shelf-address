@@ -183,6 +183,34 @@ const t = suite();
   check("back online: saved by itself", synced && rows().length === before);
   check("computer: shows it", await visible(pc.locator("[aria-label='Saved texts']").getByRole("button", { name: /Väinö/ }).first(), 15000));
 
+  // Kept 7 days after the last change (V27): one changed 8 days ago goes, 6 days ago stays.
+  const daysAgo = (d) => new Date(Date.now() - d * 24 * 3600e3).toISOString();
+  sql(`INSERT INTO saved_texts (id, text, source, created_at, updated_at) VALUES ('old-8-days', 'Kahdeksan päivää', 'ai', '${daysAgo(9)}', '${daysAgo(8)}'), ('old-6-days', 'Kuusi päivää', 'ai', '${daysAgo(9)}', '${daysAgo(6)}')`);
+  const t1 = new Date().toISOString();
+  await pc.request.put(`/api/extract/texts/${crypto.randomUUID()}`, { data: { text: "Uusi teksti.", source: "ai", createdAt: t1, updatedAt: t1 } });
+  const ids = rows().map((r) => r.id);
+  check("texts unchanged for over 7 days are deleted, newer kept", !ids.includes("old-8-days") && ids.includes("old-6-days"), JSON.stringify(ids));
+  check("…and the page says 7 days", await visible(pc.getByText(/Kept for 7 days after their last change/)));
+
+  // Many texts on a laptop screen (V27): the lists scroll inside themselves, the page doesn't.
+  for (let i = 0; i < 30; i++) {
+    const at = daysAgo(i / 24 + 0.01);
+    const id = crypto.randomUUID();
+    await pc.request.put(`/api/extract/texts/${id}`, { data: { text: `Teksti numero ${i + 1}, tarpeeksi pitkä kahdelle riville listassa.`, source: "ai", createdAt: at, updatedAt: at } });
+    if (i % 3 === 0) await pc.request.patch(`/api/extract/texts/${id}`, { data: { done: true } });
+  }
+  await pc.setViewportSize({ width: 1366, height: 768 });
+  await pc.reload();
+  await visible(pc.getByRole("region", { name: "Selected text" }));
+  await sleep(500);
+  const fit = await pc.evaluate(() => ({
+    page: document.documentElement.scrollHeight - innerHeight,
+    lists: [...document.querySelectorAll("[aria-label='Saved texts'] ul")].map((u) => u.scrollHeight - u.clientHeight),
+  }));
+  check("laptop: the page itself doesn't scroll", fit.page <= 1, JSON.stringify(fit));
+  check("…the To do and Done lists scroll inside themselves", fit.lists.length === 2 && fit.lists.every((x) => x > 100), JSON.stringify(fit));
+  await pc.screenshot({ path: ".wrangler/saved-laptop.png" });
+
   await b.close();
   t.done();
 })().catch(t.crash);

@@ -67,6 +67,50 @@ const t = suite();
   check("asked Gemini 3.8 Flash on OpenRouter, with the key from the server", req.model === "google/gemini-3.8-flash" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
   check("photo made smaller before sending (≤ 2000 px, JPEG)", req.imageType === "image/jpeg" && Math.max(req.width, req.height) === 2000 && req.imageBytes < 1500000, JSON.stringify({ w: req.width, h: req.height, bytes: req.imageBytes }));
   check("told to copy exactly, keep ä/ö/å, skip stickers and barcodes", /exactly, word for word/.test(req.prompt) && /ä, ö, å/.test(req.prompt) && /price stickers, barcodes/.test(req.prompt));
+  check("room for a long answer (20,000 tokens)", req.maxTokens === 20000, String(req.maxTokens));
+
+  // Start over sits at the top, right under the photo button (V26).
+  const another = page.getByRole("button", { name: "Add another photo" });
+  const startOver = page.getByRole("button", { name: "Start over" });
+  const [ya, ys, yt] = await Promise.all([another, startOver, box].map((l) => l.boundingBox().then((r) => r && r.y)));
+  check("Start over right under Add another photo, above the text", ya < ys && ys < yt && (await startOver.count()) === 1, JSON.stringify([ya, ys, yt]));
+
+  // Report a reading (V26): the note is optional.
+  const reportArea = page.getByRole("region", { name: "Report a problem" });
+  await reportArea.getByRole("button", { name: /Report the last photo/ }).click();
+  check("report form: note marked optional", await visible(reportArea.getByText("(optional)")));
+  await reportArea.getByRole("button", { name: "Send report" }).click();
+  check("report sent without a note", await visible(reportArea.getByText(/✓ Reported/), 15000));
+
+  // The AI runs out of room: says the end may be missing, and the report shows why.
+  await ai("length");
+  await take(await cover(page, PHONE_TEXT));
+  check("AI stopped early: warned the end may be missing", await visible(page.getByText(/The AI stopped early — the end of the text may be missing/), 30000));
+  check("…and the report link is back for the new photo", await visible(reportArea.getByRole("button", { name: /Report the last photo/ })));
+  await reportArea.getByRole("button", { name: /Report the last photo/ }).click();
+  await reportArea.getByLabel(/What went wrong/).fill("cut off after the first sentence");
+  await reportArea.getByRole("button", { name: "Send report" }).click();
+  check("report with a note sent", await visible(reportArea.getByText(/✓ Reported/), 15000));
+  await ai("ok");
+
+  const logPage = await b.newPage();
+  let reported = [];
+  for (let i = 0; i < 20 && reported.length < 2; i++) {
+    await logPage.goto(new URL("/photo-log", page.url()).href);
+    reported = await logPage.getByRole("listitem").filter({ hasText: "Extract: reported problem" }).all();
+    if (reported.length < 2) await sleep(500);
+  }
+  check("both reports in the Photo log", reported.length === 2, String(reported.length));
+  const newest = reported[0];
+  check("…the note shown", await visible(newest.getByText("Reported: cut off after the first sentence")));
+  check("…with the photo", (await newest.getByRole("img", { name: "Photo" }).count()) === 1);
+  await newest.locator("summary").click();
+  const detail = await newest.locator("pre").innerText();
+  check("…why it stopped, the tokens and the reply", /Stopped because: length — ran out of room/.test(detail) && /answer 20,000 of at most 20,000 \(thinking 19,988\)/.test(detail) && /Väinö Linnan romaani kertoo suomalaisesta/.test(detail), detail);
+  const older = await reported[1].locator("pre").evaluate((el) => el.textContent);
+  check("first report: no note, finished normally", /Note: \(none\)/.test(older) && /Stopped because: stop\n/.test(older), older);
+  check("summary counts the reports", await visible(logPage.getByLabel("Summary").getByText(/2 reported from Extract/)));
+  await logPage.close();
 
   // Stays logged in, and each visit renews the login (browsers keep cookies 400 days at most).
   const firstExpiry = cookie.expires;

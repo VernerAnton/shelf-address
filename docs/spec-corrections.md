@@ -563,3 +563,27 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   the phone's later saves of it are refused (`edited_on_computer_at`,
   migration 0011), and the phone says "corrected on the computer, so changes
   here aren't saved". A text can't be emptied here — Delete is for that.
+
+## 27. Extract: Start over at the top; cut-off readings caught and reportable.
+
+**Adds to:** §23, §21. A clear back cover came back from the AI cut off
+part-way, with no sign anything was wrong.
+
+- The AI's answer was capped at 2,000 tokens. The model's thinking counts
+  against that cap too, and Finnish takes many tokens per word, so a long
+  cover could run out of room. The cap is now 20,000 (cheap at Gemini Flash
+  prices).
+- The server now passes on why the model stopped (`finish_reason`), its
+  token counts and how long it took. If it stopped for lack of room
+  (`length`), the phone says "The AI stopped early — the end of the text may
+  be missing. Take another photo of the rest."
+- **Start over** sits at the top, right under "Add another photo" (only once
+  there's text); the one at the bottom is gone.
+- **Report a problem:** the phone keeps the last photo (as sent to the AI)
+  and exactly what came back, until Start over, even if the app is closed.
+  "Text wrong or cut off? Report the last photo" sends them, with an
+  optional note, to the Photo log (§21) — even where the log is switched off
+  on that phone, since it's a choice. In the log it shows as "Extract:
+  reported problem", with the note, the photo, why the AI stopped, the
+  tokens used and the reply. Reports use the existing table (outcome
+  `error`, screen `/extract`): no database change.

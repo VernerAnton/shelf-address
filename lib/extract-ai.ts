@@ -25,6 +25,12 @@ const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 60 * 60 * 1000;
 export const PHOTO_MAX_BYTES = 4 * 1024 * 1024;
 const AI_TIMEOUT_MS = 60_000;
+/**
+ * Room for the answer. Generous on purpose: the model can think before it
+ * answers and that counts here too, and Finnish takes many tokens per word.
+ * Until V26 it was 2,000, and long covers came back cut off (§27).
+ */
+const MAX_TOKENS = 20_000;
 
 export class ExtractError extends Error {
   constructor(
@@ -139,8 +145,29 @@ Rules:
 - If there is no readable text, answer with nothing at all.
 Answer with the transcribed text only — no introduction, no comments, no formatting marks.`;
 
+/** How a reading went, for the phone's warning and for problem reports (§27). */
+export type AiDetails = {
+  model: string;
+  /** Why the model stopped: "stop" (finished), "length" (ran out of room), or what OpenRouter said. */
+  finishReason: string | null;
+  promptTokens: number | null;
+  answerTokens: number | null;
+  /** Of the answer tokens, how many went on thinking. */
+  thinkingTokens: number | null;
+  maxTokens: number;
+  ms: number;
+};
+
+type ChatBody = {
+  model?: string;
+  choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown } }[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
+};
+
+const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
 /** Transcribes a back-cover photo (JPEG bytes) with the vision model. */
-export async function readWithAi(photo: ArrayBuffer, type: string): Promise<string> {
+export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ text: string; details: AiDetails }> {
   const s = await settings();
   if (!s.key) throw new ExtractError("AI reading isn't set up yet.", 503, "fallback");
   if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new ExtractError("That isn't a photo.", 415, "fallback");
@@ -148,6 +175,7 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<stri
 
   // Node's Buffer (nodejs_compat): native base64, a few hundred KB in well under a millisecond of CPU.
   const dataUrl = `data:${type};base64,${Buffer.from(photo).toString("base64")}`;
+  const started = Date.now();
   let response: Response;
   try {
     response = await fetch(`${s.base}/chat/completions`, {
@@ -161,7 +189,7 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<stri
       body: JSON.stringify({
         model: s.model,
         temperature: 0,
-        max_tokens: 2000,
+        max_tokens: MAX_TOKENS,
         messages: [
           {
             role: "user",
@@ -182,8 +210,20 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<stri
   }
   if (response.status === 401) throw new ExtractError("The AI key isn't working.", 502, "fallback");
   if (!response.ok) throw new ExtractError(`The AI couldn't read it (${response.status}).`, 502, "fallback");
-  const body = (await response.json().catch(() => null)) as { choices?: { message?: { content?: unknown } }[] } | null;
-  const content = body?.choices?.[0]?.message?.content;
+  const body = (await response.json().catch(() => null)) as ChatBody | null;
+  const choice = body?.choices?.[0];
+  const content = choice?.message?.content;
   const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (c as { text?: string }).text ?? "").join("") : "";
-  return tidyAiText(text);
+  return {
+    text: tidyAiText(text),
+    details: {
+      model: typeof body?.model === "string" ? body.model : s.model,
+      finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,
+      promptTokens: count(body?.usage?.prompt_tokens),
+      answerTokens: count(body?.usage?.completion_tokens),
+      thinkingTokens: count(body?.usage?.completion_tokens_details?.reasoning_tokens),
+      maxTokens: MAX_TOKENS,
+      ms: Date.now() - started,
+    },
+  };
 }

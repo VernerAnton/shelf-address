@@ -6,6 +6,8 @@ import Link from "next/link";
 import { kvGet, kvSet } from "@/lib/client/kv";
 import { queueText, syncTexts, type SyncResult } from "@/lib/client/saved-texts";
 import { readTextFromPhoto, warmOcr } from "@/lib/client/ocr";
+import { logPhoto } from "@/lib/client/photo-log";
+import type { AiDetails } from "@/lib/extract-ai";
 import { textFileName, tidyText } from "@/lib/extract-text";
 import { LoginForm } from "./_components/login-form";
 
@@ -23,6 +25,67 @@ const SHAKY = 70;
 const AI_SIDE = 2000;
 
 type Ai = { configured: boolean; loggedIn: boolean };
+
+/**
+ * The last photo read and what came of it, kept on the phone until Start over
+ * so a bad reading can be reported (§27), even after the app was closed.
+ */
+const LAST_KEY = "extract:last";
+type LastRead = {
+  takenAt: string;
+  /** The photo as sent to the AI (made smaller), and a thumbnail for the log. */
+  photo: Blob | null;
+  thumb: Blob | null;
+  width: number;
+  height: number;
+  bytes: number;
+  mime: string;
+  readBy: "ai" | "phone";
+  /** Exactly what came back, before anyone corrected it. */
+  reply: string;
+  details: AiDetails | null;
+  /** Why the AI didn't read it, when the phone did. */
+  why: string | null;
+  confidence: number | null;
+  ms: number;
+};
+
+/** The model stopped because it ran out of room: the end is missing. */
+const stoppedEarly = (d: AiDetails | null) => d?.finishReason === "length";
+
+/** A small copy for the photo log's list. */
+async function thumbnail(bitmap: ImageBitmap): Promise<Blob | null> {
+  const scale = Math.min(1, 480 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.75));
+  canvas.width = canvas.height = 0;
+  return blob;
+}
+
+/** The report's text for the photo log: the note, how the reading went, and the reply. */
+function reportText(last: LastRead, note: string): string {
+  const d = last.details;
+  const n = (v: number | null) => (v == null ? "?" : v.toLocaleString("en-GB"));
+  const lines = [
+    `Note: ${note || "(none)"}`,
+    last.readBy === "ai" && d
+      ? [
+          `Read by: AI (${d.model})`,
+          `Stopped because: ${d.finishReason ?? "not said"}${stoppedEarly(d) ? " — ran out of room, the end is missing" : ""}`,
+          `Tokens: photo and instructions ${n(d.promptTokens)}, answer ${n(d.answerTokens)} of at most ${n(d.maxTokens)}${d.thinkingTokens != null ? ` (thinking ${n(d.thinkingTokens)})` : ""}`,
+          `AI took: ${(d.ms / 1000).toFixed(1)} s`,
+        ].join("\n")
+      : `Read by: the phone${last.why ? ` (the AI couldn't: ${last.why})` : ""}, confidence ${last.confidence ?? "?"}`,
+    `Photo: as sent to the AI${last.photo ? "" : " (couldn't be kept)"}; the original was ${last.width}×${last.height}`,
+    "",
+    "— What came back —",
+    last.reply || "(nothing)",
+  ];
+  return lines.join("\n");
+}
 
 /** The photo, made smaller for the trip to the AI. */
 async function forAi(bitmap: ImageBitmap): Promise<Blob> {
@@ -47,15 +110,15 @@ class AiUnavailable extends Error {
   }
 }
 
-async function readWithAi(bitmap: ImageBitmap): Promise<string> {
+async function readWithAi(jpeg: Blob): Promise<{ text: string; details: AiDetails | null }> {
   let response: Response;
   try {
-    response = await fetch("/api/extract", { method: "POST", body: await forAi(bitmap), headers: { "content-type": "image/jpeg" } });
+    response = await fetch("/api/extract", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg" } });
   } catch {
     throw new AiUnavailable("no signal");
   }
-  const body = (await response.json().catch(() => null)) as { text?: string; error?: string; kind?: string } | null;
-  if (response.ok && typeof body?.text === "string") return body.text;
+  const body = (await response.json().catch(() => null)) as { text?: string; details?: AiDetails; error?: string; kind?: string } | null;
+  if (response.ok && typeof body?.text === "string") return { text: body.text, details: body.details ?? null };
   throw new AiUnavailable(body?.error ?? `error ${response.status}`, body?.kind === "login");
 }
 
@@ -87,13 +150,17 @@ export function ExtractScreen() {
   const [copied, setCopied] = useState(false);
   const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
   const [save, setSave] = useState<SyncResult | "saving" | null>(null);
+  const [last, setLast] = useState<LastRead | null>(null);
+  const [report, setReport] = useState<"closed" | "open" | "sending" | "sent">("closed");
+  const [reportNote, setReportNote] = useState("");
   const current = useRef<Current | null>(null);
   const pendingSave = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
 
   useEffect(() => {
-    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY), kvGet<Current | null>(CURRENT_KEY)]).then(([saved, known, cur]) => {
+    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY), kvGet<Current | null>(CURRENT_KEY), kvGet<LastRead | null>(LAST_KEY)]).then(([saved, known, cur, lastRead]) => {
       setText(saved ?? "");
       if (known) setAi(known);
+      setLast(lastRead ?? null);
       current.current = cur ?? null;
       setLoaded(true);
     });
@@ -170,25 +237,37 @@ export function ExtractScreen() {
     saveSoon(next, readBy, readBy ? 0 : SAVE_AFTER_MS);
   };
 
+  const remember = (next: LastRead | null) => {
+    setLast(next);
+    setReport("closed");
+    setReportNote("");
+    void kvSet(LAST_KEY, next).catch(() => {});
+  };
+
   const onPhoto = async (file: File | undefined) => {
     if (!file) return;
     setReading(true);
     setNote(null);
+    const started = Date.now();
     let bitmap: ImageBitmap | null = null;
     try {
       bitmap = await createImageBitmap(file);
+      // The photo as the AI gets it, also kept for a problem report.
+      const jpeg = await forAi(bitmap).catch(() => null);
       let read: string | null = null;
+      let details: AiDetails | null = null;
       let why: string | null = null;
       if (ai.loggedIn) {
         try {
-          read = await readWithAi(bitmap);
+          if (!jpeg) throw new AiUnavailable("the photo couldn't be prepared");
+          ({ text: read, details } = await readWithAi(jpeg));
         } catch (e) {
           const reason = e instanceof AiUnavailable ? e : new AiUnavailable("it failed");
           if (reason.loggedOut) rememberAi({ ...ai, loggedIn: false });
-          why = reason.loggedOut ? "this phone isn't logged in to AI reading any more" : reason.message.replace(/\.$/, "");
+          why = reason.loggedOut ? "this phone isn't logged in any more" : reason.message.replace(/\.$/, "");
         }
       }
-      let confidence = 100;
+      let confidence: number | null = null;
       let readBy: "ai" | "phone" = "ai";
       if (read === null) {
         readBy = "phone";
@@ -196,17 +275,40 @@ export function ExtractScreen() {
         read = tidyText(phone.text);
         confidence = phone.confidence;
       }
+      remember({
+        takenAt: new Date(started).toISOString(),
+        photo: jpeg,
+        thumb: await thumbnail(bitmap).catch(() => null),
+        width: bitmap.width,
+        height: bitmap.height,
+        bytes: file.size,
+        mime: file.type,
+        readBy,
+        reply: read,
+        details,
+        why,
+        confidence,
+        ms: Date.now() - started,
+      });
+      const early = stoppedEarly(details);
       if (!read) {
-        setNote({ kind: "error", text: "No text found in that photo. Try again closer, with the text filling the picture and good light." });
+        setNote({
+          kind: "error",
+          text: early
+            ? "The AI ran out of room before writing anything. Try again, and if it keeps happening, report it below."
+            : "No text found in that photo. Try again closer, with the text filling the picture and good light.",
+        });
         return;
       }
       change(text.trim() ? `${text.trim()}\n\n${read}` : read, readBy);
       setNote(
-        why
-          ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
-          : confidence < SHAKY
-            ? { kind: "warn", text: "Parts of this may be read wrong — check it before sharing. A sharper, flatter, better-lit photo helps." }
-            : null,
+        early
+          ? { kind: "warn", text: "The AI stopped early — the end of the text may be missing. Take another photo of the rest." }
+          : why
+            ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
+            : confidence !== null && confidence < SHAKY
+              ? { kind: "warn", text: "Parts of this may be read wrong — check it before sharing. A sharper, flatter, better-lit photo helps." }
+              : null,
       );
     } catch {
       setNote({
@@ -219,6 +321,35 @@ export function ExtractScreen() {
       bitmap?.close();
       setReading(false);
       if (photoRef.current) photoRef.current.value = "";
+    }
+  };
+
+  /** Sends the last photo, what came back and the note to the Photo log (§27). */
+  const sendReport = async () => {
+    if (!last) return;
+    setReport("sending");
+    try {
+      await logPhoto(
+        {
+          takenAt: last.takenAt,
+          outcome: "error",
+          isbns: [],
+          error: reportNote.trim() ? `Reported: ${reportNote.trim()}` : "Reported (no note)",
+          ocrText: reportText(last, reportNote.trim()),
+          durationMs: last.ms,
+          width: last.width,
+          height: last.height,
+          bytes: last.bytes,
+          mime: last.mime,
+        },
+        last.photo,
+        last.thumb,
+        { always: true },
+      );
+      setReport("sent");
+    } catch {
+      setReport("open");
+      setNote({ kind: "error", text: "Couldn't save the report on this phone. Try again." });
     }
   };
 
@@ -262,6 +393,7 @@ export function ExtractScreen() {
     change("");
     setNote(null);
     setSave(null);
+    remember(null);
   };
 
   if (!loaded) return <p className="text-muted">Loading…</p>;
@@ -306,6 +438,11 @@ export function ExtractScreen() {
         <CameraIcon className="size-6" />
         {reading ? "Reading the text…" : has ? "Add another photo" : "Take a photo of the text"}
       </button>
+      {has && (
+        <button type="button" disabled={reading} onClick={startOver} className={`${button} bg-accent text-accent-contrast`}>
+          Start over
+        </button>
+      )}
       {reading ? (
         <p className="-mt-2 text-center text-xs text-muted">
           {ai.loggedIn ? "The AI is reading it — usually a few seconds." : "This can take a little while on some phones."}
@@ -381,9 +518,47 @@ export function ExtractScreen() {
           <p className="text-xs text-muted">
             Share sends it as a text file: choose OneDrive to have it on the computer, or email, or anything else.
           </p>
-          <button type="button" onClick={startOver} className={`${button} mt-2 bg-accent text-accent-contrast`}>
-            Start over
-          </button>
+        </section>
+      )}
+
+      {last && !reading && (
+        <section aria-label="Report a problem" className="flex flex-col gap-2 border-t border-line pt-3">
+          {report === "closed" ? (
+            <button type="button" onClick={() => setReport("open")} className="self-start text-sm text-muted underline">
+              Text wrong or cut off? Report the last photo
+            </button>
+          ) : report === "sent" ? (
+            <p role="status" className="text-sm text-muted">
+              ✓ Reported — the photo and what came back are in the{" "}
+              <Link href="/photo-log" className="font-medium text-accent">
+                Photo log
+              </Link>
+              , to find out what went wrong.
+            </p>
+          ) : (
+            <>
+              <label htmlFor="report-note" className="text-sm font-medium">
+                What went wrong? <span className="font-normal text-muted">(optional)</span>
+              </label>
+              <textarea
+                id="report-note"
+                value={reportNote}
+                onChange={(e) => setReportNote(e.target.value)}
+                rows={2}
+                placeholder="For example: cut off after the second paragraph"
+                className="w-full rounded-xl border border-line bg-surface p-3 text-base outline-none focus:border-accent"
+              />
+              <p className="text-xs text-muted">Sends the last photo and exactly what came back from it, so we can see why.</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" disabled={report === "sending"} onClick={() => void sendReport()} className={`${button} bg-accent text-accent-contrast`}>
+                  {report === "sending" ? "Sending…" : "Send report"}
+                </button>
+                <button type="button" onClick={() => setReport("closed")} className={`${button} border border-line bg-surface`}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
         </section>
       )}
     </>

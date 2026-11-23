@@ -8,7 +8,8 @@
 //
 // Also OpenRouter, for Extract's AI reading (/api/v1/chat/completions), so
 // tests never reach the real AI or spend anything:
-//   POST /__ai?mode=ok|limit|badkey|slow   how it answers next (default ok)
+//   POST /__ai?mode=ok|limit|badkey|slow|length   how it answers next (default ok;
+//                                          length: stops early, out of room)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
 const http = require("http");
 const fs = require("fs");
@@ -79,6 +80,7 @@ async function chat(req, res) {
     title: req.headers["x-title"],
     model: body.model,
     temperature: body.temperature,
+    maxTokens: body.max_tokens,
     prompt: content.find((c) => c.type === "text")?.text ?? "",
     imageType: image.slice(5, image.indexOf(";")),
     imageBytes: jpeg.length,
@@ -88,7 +90,19 @@ async function chat(req, res) {
   if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
   if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
-  json(res, 200, { choices: [{ message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }] });
+  const usage = (answer, thinking) => ({ prompt_tokens: 1290, completion_tokens: answer, completion_tokens_details: { reasoning_tokens: thinking } });
+  if (aiMode === "length") {
+    return json(res, 200, {
+      model: body.model,
+      choices: [{ finish_reason: "length", message: { role: "assistant", content: AI_TEXT.split(" ").slice(0, 5).join(" ") } }],
+      usage: usage(body.max_tokens, body.max_tokens - 12),
+    });
+  }
+  json(res, 200, {
+    model: body.model,
+    choices: [{ finish_reason: "stop", message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }],
+    usage: usage(640, 590),
+  });
 }
 
 http

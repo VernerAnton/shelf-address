@@ -14,8 +14,8 @@ export async function POST(request: Request) {
     const type = request.headers.get("content-type")?.split(";")[0].trim() ?? "";
     const length = Number(request.headers.get("content-length") ?? 0);
     if (length > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");
-    const text = await readWithAi(await request.arrayBuffer(), type);
-    return Response.json({ text }, { headers: NO_STORE });
+    const { text, details } = await readWithAi(await request.arrayBuffer(), type);
+    return Response.json({ text, details }, { headers: NO_STORE });
   } catch (error) {
     if (error instanceof ExtractError) {
       return Response.json({ error: error.message, kind: error.kind }, { status: error.status, headers: NO_STORE });

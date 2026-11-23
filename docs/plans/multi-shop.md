@@ -2,7 +2,7 @@
 
 > **Status: not started. Discuss with the owner before building anything.**
 > Saved on 2026-11-23 at the owner's request ("Save that for later, it won't
-> probably happen soon"). Nothing in the app has been changed for this.
+> properly happen soon"). Nothing in the app has been changed for this.
 
 ## The idea
 

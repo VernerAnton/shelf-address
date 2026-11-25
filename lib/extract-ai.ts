@@ -14,6 +14,10 @@ import { tidyAiText } from "@/lib/extract-text";
  *   OPENROUTER_API_KEY   the OpenRouter key. Spending is capped there (weekly
  *                        limit on the key), not here.
  *   EXTRACT_MODEL        optional: another OpenRouter model id.
+ *   EXTRACT_THINKING     optional: how much the model may think before it
+ *                        answers — minimal (default, V32), low, medium, high,
+ *                        or none. Copying text needs little thinking, and
+ *                        thinking was most of the wait (§29).
  *   OPENROUTER_BASE      optional: tests point it at a local stand-in.
  */
 
@@ -43,7 +47,8 @@ export class ExtractError extends Error {
   }
 }
 
-type Settings = { code: string | null; key: string | null; model: string; base: string };
+type Settings = { code: string | null; key: string | null; model: string; base: string; thinking: string };
+const THINKING = ["none", "minimal", "low", "medium", "high"];
 
 async function settings(): Promise<Settings> {
   const env = (await getEnv()) as unknown as Record<string, string | undefined>;
@@ -51,6 +56,7 @@ async function settings(): Promise<Settings> {
     code: env.EXTRACT_CODE?.trim() || null,
     key: env.OPENROUTER_API_KEY?.trim() || null,
     model: env.EXTRACT_MODEL?.trim() || DEFAULT_MODEL,
+    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "minimal",
     base: (env.OPENROUTER_BASE?.trim() || OPENROUTER).replace(/\/$/, ""),
   };
 }
@@ -156,10 +162,14 @@ export type AiDetails = {
   thinkingTokens: number | null;
   maxTokens: number;
   ms: number;
+  /** How much thinking was allowed (V32), and who at OpenRouter served it, if it says. */
+  thinking?: string;
+  provider?: string | null;
 };
 
 type ChatBody = {
   model?: string;
+  provider?: string;
   choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown } }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
 };
@@ -176,9 +186,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
   // Node's Buffer (nodejs_compat): native base64, a few hundred KB in well under a millisecond of CPU.
   const dataUrl = `data:${type};base64,${Buffer.from(photo).toString("base64")}`;
   const started = Date.now();
-  let response: Response;
-  try {
-    response = await fetch(`${s.base}/chat/completions`, {
+  const ask = (tuned: boolean) =>
+    fetch(`${s.base}/chat/completions`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${s.key}`,
@@ -190,6 +199,12 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
         model: s.model,
         temperature: 0,
         max_tokens: MAX_TOKENS,
+        ...(tuned && {
+          // Thinking was 70–80% of what the model produced, and most of the wait; copying text needs little (V32).
+          reasoning: { effort: s.thinking },
+          // Of the providers serving the model, the one answering fastest right now (V32).
+          provider: { sort: "latency" },
+        }),
         messages: [
           {
             role: "user",
@@ -200,8 +215,18 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
           },
         ],
       }),
-      signal: AbortSignal.timeout(AI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(Math.max(1000, AI_TIMEOUT_MS - (Date.now() - started))),
     });
+  let response: Response;
+  let tuned = true;
+  try {
+    response = await ask(true);
+    // Refused as asked (a model that won't take these settings, say): once more, plain, as before V32.
+    if (response.status === 400) {
+      console.error("AI refused the speed settings:", (await response.text().catch(() => "")).slice(0, 300));
+      tuned = false;
+      response = await ask(false);
+    }
   } catch {
     throw new ExtractError("The AI didn't answer in time.", 504, "fallback");
   }
@@ -218,6 +243,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
     text: tidyAiText(text),
     details: {
       model: typeof body?.model === "string" ? body.model : s.model,
+      thinking: tuned ? s.thinking : "model's default (settings refused)",
+      provider: typeof body?.provider === "string" ? body.provider : null,
       finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,
       promptTokens: count(body?.usage?.prompt_tokens),
       answerTokens: count(body?.usage?.completion_tokens),

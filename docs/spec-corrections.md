@@ -650,3 +650,21 @@ part-way, with no sign anything was wrong.
   On the computer, Report a problem is on two lines and Copy keeps its width
   when it says "Copied ✓", so the buttons stay on one row; on a wide but not
   very wide screen the cover is held to what the text column can spare.
+
+## 29. Faster AI reading: little thinking, the fastest provider.
+
+**Adds to:** §23. The shop asked whether the reading could be faster.
+
+- The readings kept since §28 showed where the time went: 70–80% of what
+  Gemini 3.8 Flash produced was hidden "thinking" before the text (e.g. 918
+  of 1,172 answer tokens), and copying text from a photo needs little. The
+  request now asks for `reasoning: { effort: "minimal" }` (Gemini 3's lowest
+  thinking level). Set `EXTRACT_THINKING` (none / minimal / low / medium /
+  high) in Cloudflare to change it without a release.
+- Two readings took 23–25 s with the same token counts as 8 s ones: a slow
+  provider at that moment. The request asks OpenRouter for the provider
+  answering fastest right now (`provider: { sort: "latency" }`).
+- Each reading records who served it and the thinking level (shown in
+  reports: "AI took: 6.1 s, served by …, thinking: minimal").
+- If OpenRouter refuses these settings for the model (400), the server asks
+  once more without them, as before V32 — the reading never fails over them.

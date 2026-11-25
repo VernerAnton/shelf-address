@@ -73,6 +73,8 @@ const t = suite();
   check("photo made smaller before sending (≤ 2000 px, JPEG)", req.imageType === "image/jpeg" && Math.max(req.width, req.height) === 2000 && req.imageBytes < 1500000, JSON.stringify({ w: req.width, h: req.height, bytes: req.imageBytes }));
   check("told to copy exactly, keep ä/ö/å, skip stickers and barcodes", /exactly, word for word/.test(req.prompt) && /ä, ö, å/.test(req.prompt) && /price stickers, barcodes/.test(req.prompt));
   check("room for a long answer (20,000 tokens)", req.maxTokens === 20000, String(req.maxTokens));
+  check("thinking kept to a minimum (V32)", req.reasoning && req.reasoning.effort === "minimal", JSON.stringify(req.reasoning));
+  check("…and the fastest-answering provider asked for", req.provider && req.provider.sort === "latency", JSON.stringify(req.provider));
 
   // Start over sits at the top, right under the photo button (V26).
   const another = page.getByRole("button", { name: "Add another photo" });
@@ -113,6 +115,7 @@ const t = suite();
   const detail = await newest.locator("pre").innerText();
   check("…why it stopped, the tokens and the reply", /Stopped because: length — ran out of room/.test(detail) && /answer 20,000 of at most 20,000 \(thinking 19,988\)/.test(detail) && /Väinö Linnan romaani kertoo suomalaisesta/.test(detail), detail);
   const older = await reported[1].locator("pre").evaluate((el) => el.textContent);
+  check("…and who served it, with how much thinking was allowed", /served by Google AI Studio, thinking: minimal/.test(detail), detail);
   check("first report: no note, finished normally", /Note: \(none\)/.test(older) && /Stopped because: stop\n/.test(older), older);
   check("summary counts the reports", await visible(logPage.getByLabel("Summary").getByText(/2 reported from Extract/)));
   await logPage.close();
@@ -125,6 +128,15 @@ const t = suite();
   await sleep(500);
   const renewed = (await page.context().cookies()).find((c) => c.name === "extract_login");
   check("…and the login renewed by the visit", renewed && renewed.expires > firstExpiry + 1, JSON.stringify([firstExpiry, renewed && renewed.expires]));
+
+  // A model that refuses the speed settings (V32): asked again plainly, still read by AI.
+  await ai("picky");
+  await startOver();
+  await take(await cover(page, PHONE_TEXT));
+  check("speed settings refused: read by AI all the same", await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 }).then(() => true, () => false) && (await page.getByText(/so the phone did/).count()) === 0);
+  const tries = (await ai()).requests.slice(-2);
+  check("…the second try without them", tries.length === 2 && tries[0].reasoning && !tries[1].reasoning && !tries[1].provider, JSON.stringify(tries.map((r) => [r.reasoning, r.provider])));
+  await ai("ok");
 
   // The spending limit reached: the phone reads it instead, and says why.
   await ai("limit");

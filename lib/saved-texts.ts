@@ -270,7 +270,7 @@ function describe(d: AiDetails | null): string {
     `Read by: AI (${d.model})`,
     `Stopped because: ${d.finishReason ?? "not said"}${d.finishReason === "length" ? " — ran out of room, the end is missing" : ""}`,
     `Tokens: photo and instructions ${n(d.promptTokens)}, answer ${n(d.answerTokens)} of at most ${n(d.maxTokens)}${d.thinkingTokens != null ? ` (thinking ${n(d.thinkingTokens)})` : ""}`,
-    `AI took: ${(d.ms / 1000).toFixed(1)} s`,
+    `AI took: ${(d.ms / 1000).toFixed(1)} s${d.provider ? `, served by ${d.provider}` : ""}${d.thinking ? `, thinking: ${d.thinking}` : ""}`,
   ].join("\n");
 }
 

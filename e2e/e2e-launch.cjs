@@ -11,7 +11,7 @@ const installed = () => {
   const errors = [];
   const browser = await chromium.launch();
   {
-    const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788" });
+    const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788" });
     await ctx.addInitScript(installed);
     const page = await ctx.newPage(); page.on("pageerror", (e) => errors.push(String(e)));
     // An app installed before V14 launches on its old start page.
@@ -37,7 +37,7 @@ const installed = () => {
   }
   {
     // An installed app on a computer (a Chromebook): opens on Saved texts.
-    const ctx = await browser.newContext({ baseURL: "http://127.0.0.1:8788", viewport: { width: 1280, height: 800 }, userAgent: "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36" });
+    const ctx = await browser.newContext({ baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788", viewport: { width: 1280, height: 800 }, userAgent: "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36" });
     await ctx.addInitScript(installed);
     const page = await ctx.newPage(); page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto("/evaluate");
@@ -49,7 +49,7 @@ const installed = () => {
   }
   {
     // A normal browser tab: /scan is just Scan.
-    const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788" });
+    const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788" });
     const page = await ctx.newPage(); page.on("pageerror", (e) => errors.push(String(e)));
     await page.goto("/scan"); await sleep(2000);
     check("browser tab on /scan stays on Scan", page.url().endsWith("/scan"), page.url());

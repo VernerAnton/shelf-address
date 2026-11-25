@@ -20,7 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
 
-const PORT = 8790;
+const PORT = Number(process.env.E2E_BOOKS_PORT) || 8790; // run-fast.cjs gives each worker its own
 const BASE = `http://127.0.0.1:${PORT}`;
 const FIX = path.join(__dirname, "../lib/lookup/__fixtures__");
 const fixture = (f) => JSON.parse(fs.readFileSync(path.join(FIX, f), "utf8"));

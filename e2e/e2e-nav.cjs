@@ -9,7 +9,7 @@ const visible = (loc, t = 15000) => loc.first().waitFor({ state: "visible", time
 (async () => {
   const errors = [];
   const browser = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788", permissions: ["camera"] });
+  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788", permissions: ["camera"] });
   const page = await ctx.newPage(); page.setDefaultTimeout(15000);
   page.on("pageerror", (e) => errors.push(String(e)));
   const main = page.getByRole("navigation", { name: "Main" });

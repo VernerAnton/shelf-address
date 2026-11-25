@@ -59,3 +59,18 @@ full test run on a small change.
   that a cloud session can't give, and quietly applies nothing. Check with
   `npx wrangler d1 migrations list shelf-address-db --remote` before
   deploying the code that needs it.
+
+## One line of work at a time
+
+Every session deploys to the same live app. In November two sessions worked
+on separate branches from different starting points, both deploying: each
+release from one silently removed the other's features from the live app
+(BookOps vanished for days; both used V26–V32). See spec-corrections §31.
+
+- **Before deploying, check the live app is a build of your branch's
+  history:** `curl -s https://shelf-address.verner-sdr.workers.dev/api/version`
+  gives the commit it was built from (`buildId`, before the `@`); it must be
+  an ancestor of HEAD (`git merge-base --is-ancestor <commit> HEAD`). If it
+  isn't, someone else deployed: fetch, merge their branch (or main) in first.
+- **Start new work from the latest main**, and keep main up to date (the
+  owner merges the branch on GitHub), so the next session starts from it.

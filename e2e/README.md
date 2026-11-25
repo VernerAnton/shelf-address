@@ -43,3 +43,11 @@ bash e2e/serve.sh places             # just start it, to poke at by hand (stop: 
 
 These live in the repository on purpose: the cloud sessions this app is built
 in are reset now and then, and anything outside the repository goes with them.
+
+## One run at a time
+
+Every run (`run.sh`, `serve.sh`) stops and restarts the one shared test server
+on port 8788, and a build replaces the app it serves. So never start a run, or
+build, while another run is still going (a background full run included):
+they knock each other's server over, and the failures look like real ones
+(`ECONNREFUSED`, click timeouts, missing rows). Wait for it, or stop it first.

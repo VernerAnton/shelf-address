@@ -29,7 +29,7 @@ const STILL_SIDE = 480;
 const PICKED_MAX = 2400;
 const LIVE_EVERY_MS = 250;
 
-function pixelsOf(source: CanvasImageSource, width: number, height: number, maxSide: number): Pixels {
+export function pixelsOf(source: CanvasImageSource, width: number, height: number, maxSide: number): Pixels {
   const scale = Math.min(1, maxSide / Math.max(width, height));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width * scale));
@@ -40,7 +40,7 @@ function pixelsOf(source: CanvasImageSource, width: number, height: number, maxS
   return { width: data.width, height: data.height, data: data.data };
 }
 
-function toCanvas(pixels: Pixels): HTMLCanvasElement {
+export function toCanvas(pixels: Pixels): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = pixels.width;
   canvas.height = pixels.height;
@@ -48,7 +48,7 @@ function toCanvas(pixels: Pixels): HTMLCanvasElement {
   return canvas;
 }
 
-function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
+export function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
   return new Promise((resolve, reject) =>
     canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("encode failed"))), type, quality),
   );
@@ -64,7 +64,7 @@ function smooth(previous: Corners | null, next: Corners): Corners {
  * A box of exactly `aspect`, as large as fits in the space available, so
  * overlays drawn in fractions of it line up with the picture inside.
  */
-function FitBox({ aspect, className = "", children }: { aspect: number; className?: string; children: ReactNode }) {
+export function FitBox({ aspect, className = "", children }: { aspect: number; className?: string; children: ReactNode }) {
   const outer = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
@@ -88,7 +88,7 @@ function FitBox({ aspect, className = "", children }: { aspect: number; classNam
   );
 }
 
-function Outline({ corners, found }: { corners: Corners; found: boolean }) {
+export function Outline({ corners, found }: { corners: Corners; found: boolean }) {
   return (
     <svg viewBox="0 0 1 1" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 size-full" aria-hidden>
       <polygon
@@ -305,8 +305,12 @@ export function CoverCamera({ title, onSave, onClose }: Props) {
           </div>
         </>
       ) : (
-        <Adjust
-          stage={stage}
+        <CornerEditor
+          photo={stage.photo}
+          url={stage.url}
+          corners={stage.corners}
+          found={stage.found}
+          saving={stage.kind === "saving"}
           onCorners={(corners) => stage.kind === "adjust" && setStage({ ...stage, corners })}
           onRetake={() => {
             setError(null);
@@ -329,24 +333,46 @@ export function CoverCamera({ title, onSave, onClose }: Props) {
 const LOUPE = 110;
 const ZOOM = 2.5;
 
-function Adjust({
-  stage,
+/**
+ * The corner editor: the photo with four corner handles (a magnifier under the
+ * one being dragged), and Retake / Save underneath. Used after taking a cover
+ * here, and to edit a front cover on Saved texts (app/extract/saved/, V33.2),
+ * which adds its own tools (turn, whole picture) and labels.
+ */
+export function CornerEditor({
+  photo,
+  url,
+  corners,
+  found,
+  saving,
   onCorners,
   onRetake,
   onSave,
   error,
+  retakeLabel = "Retake",
+  saveLabel = "Save cover",
+  hint,
+  tools,
 }: {
-  stage: Extract<Stage, { kind: "adjust" | "saving" }>;
+  photo: Pixels;
+  url: string;
+  corners: Corners;
+  found: boolean;
+  saving: boolean;
   onCorners: (corners: Corners) => void;
   onRetake: () => void;
   onSave: () => void;
   error: string | null;
+  retakeLabel?: string;
+  saveLabel?: string;
+  /** Replaces the usual "check the corners" line. */
+  hint?: string;
+  /** Extra buttons, shown above the line. */
+  tools?: ReactNode;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const [boxSize, setBoxSize] = useState<{ width: number; height: number } | null>(null);
-  const saving = stage.kind === "saving";
-  const { corners, photo, url } = stage;
 
   const move = (index: number, event: ReactPointerEvent) => {
     const box = boxRef.current!.getBoundingClientRect();
@@ -425,20 +451,22 @@ function Adjust({
           )}
         </FitBox>
       </div>
+      {tools}
       <p role="status" className="px-4 text-center text-sm text-white/80">
-        {stage.found
-          ? "Check the corners sit on the book's corners — drag any that don't."
-          : "Couldn't find the book's edges. Drag the corners onto the book's corners."}
+        {hint ??
+          (found
+            ? "Check the corners sit on the book's corners — drag any that don't."
+            : "Couldn't find the book's edges. Drag the corners onto the book's corners.")}
       </p>
       {error && (
         <p role="alert" className="px-4 pt-2 text-center text-sm text-red-300">{error}</p>
       )}
       <div className="flex gap-3 px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
         <button type="button" onClick={onRetake} disabled={saving} className="h-12 flex-1 rounded-xl bg-white/15 font-medium">
-          Retake
+          {retakeLabel}
         </button>
         <button type="button" onClick={onSave} disabled={saving} className="h-12 flex-1 rounded-xl bg-emerald-500 font-medium text-black disabled:opacity-60">
-          {saving ? "Saving…" : "Save cover"}
+          {saving ? "Saving…" : saveLabel}
         </button>
       </div>
     </>

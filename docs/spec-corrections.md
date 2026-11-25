@@ -842,3 +842,24 @@ migrations are applied and don't touch the same tables.
   before the last turn or crop (one step). Edits are saved to the picture on
   the server (JPEG, quality 0.92), so Copy, Download and the thumbnail show
   the edited one, on every computer.
+
+## 33. Front cover editing: instant turns, the Sections editor (V33.2).
+
+**Replaces** §32's picture editor; asked for by the owner ("feels clumsy";
+"the Sections cover editor feels more sophisticated").
+
+- **↺ / ↻ turn at once.** The turned picture is made on the computer and
+  shown straight away; it's saved in the background, one save after another
+  so quick taps land in order. A short "Saving…" then "✓ Saved" says when it's
+  kept; if a save fails, the picture goes back to the server's and says so.
+- **Edit picture** opens the same full-screen editor as photographing a
+  cover in Sections (§15; `CornerEditor` in components/cover-camera.tsx, now
+  shared): four corner handles that start on the book's edges if it finds
+  them (OpenCV, as there), a magnifier under the one being dragged, and
+  saving straightens and crops to them. Added here: ↺ Left / Right ↻ (shown
+  at once) and Whole picture (corners back to the edges). Nothing is saved
+  until Save picture; Cancel, Close or Esc leave it as it was. The picture
+  keeps its full resolution.
+- **Undo last change** puts back the picture as it was before the last turn
+  or edit (one step). Copy picture, Download picture and the full-size view
+  show the newest picture at once.

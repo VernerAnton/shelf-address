@@ -49,3 +49,8 @@ full test run on a small change.
 - **Bigger change, or anything that changes the database:** run the full
   suite first, back up to R2 (`bash scripts/backup-db.sh`), and get the
   owner's go-ahead before migrating and deploying.
+- **Applying a migration:** `CI=true npx wrangler d1 migrations apply
+  shelf-address-db --remote`. Without `CI=true` wrangler waits for a "yes"
+  that a cloud session can't give, and quietly applies nothing. Check with
+  `npx wrangler d1 migrations list shelf-address-db --remote` before
+  deploying the code that needs it.

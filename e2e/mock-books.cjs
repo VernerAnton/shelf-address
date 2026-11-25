@@ -8,8 +8,8 @@
 //
 // Also OpenRouter, for Extract's AI reading (/api/v1/chat/completions), so
 // tests never reach the real AI or spend anything:
-//   POST /__ai?mode=ok|limit|badkey|slow|length   how it answers next (default ok;
-//                                          length: stops early, out of room)
+//   POST /__ai?mode=ok|limit|badkey|slow|length|delay   how it answers next (default ok;
+//                                          length: stops early, out of room; delay: 3 s)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
 const http = require("http");
 const fs = require("fs");
@@ -90,6 +90,7 @@ async function chat(req, res) {
   if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
   if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
+  if (aiMode === "delay") await new Promise((r) => setTimeout(r, 3000)); // a slow but fine answer
   const usage = (answer, thinking) => ({ prompt_tokens: 1290, completion_tokens: answer, completion_tokens_details: { reasoning_tokens: thinking } });
   if (aiMode === "length") {
     return json(res, 200, {

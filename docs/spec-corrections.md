@@ -634,3 +634,8 @@ part-way, with no sign anything was wrong.
   buttons fit on one row. From 1280 px Copy picture and Download picture sit
   beside the cover, so the cover can be as tall as the whole text column
   (from 1536 px; a little shorter below that, so nothing wraps or scrolls).
+- **V30:** the front cover can be photographed while the AI is still reading
+  the back, so the wait isn't wasted. It's kept on the phone ("✓ Front cover
+  taken — it goes to the computer with the text.") and goes up as soon as the
+  text is saved. A cover whose text never arrives (the reading failed, then
+  Start over) is let go after an hour and never holds up the others.

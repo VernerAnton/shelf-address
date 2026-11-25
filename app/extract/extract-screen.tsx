@@ -185,7 +185,10 @@ export function ExtractScreen() {
   const [note, setNote] = useState<{ kind: "warn" | "ok" | "error"; text: string } | null>(null);
   const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
   const [save, setSave] = useState<SyncResult | "saving" | null>(null);
-  const [cover, setCover] = useState<CoverResult | "saving" | null>(null);
+  // "held": taken while the back text was still being read; it goes up once the text is saved (V30).
+  const [cover, setCover] = useState<CoverResult | "saving" | "held" | null>(null);
+  const coverHeld = useRef(false);
+  const readingNow = useRef(false);
   const [last, setLast] = useState<LastRead | null>(null);
   const [report, setReport] = useState<"closed" | "open" | "sending" | "sent">("closed");
   const [reportNote, setReportNote] = useState("");
@@ -223,7 +226,7 @@ export function ExtractScreen() {
         if (state.loggedIn) {
           const result = await syncTexts();
           if (current.current) setSave(result);
-          const covers = await syncCovers();
+          const covers = await syncCovers(current.current?.id);
           if (current.current?.cover === "waiting" && covers === "saved") {
             current.current = { ...current.current, cover: "saved" };
             void kvSet(CURRENT_KEY, current.current);
@@ -284,6 +287,12 @@ export function ExtractScreen() {
         .then((result) => {
           setSave(result);
           if (result === "loggedout") rememberAi({ ...ai, loggedIn: false });
+          // A front cover taken while the AI was reading follows the text up now.
+          else if (coverHeld.current) {
+            coverHeld.current = false;
+            setCover("saving");
+            void syncCovers(cur.id).then(rememberCover);
+          }
         });
     };
     pendingSave.current = { timer: setTimeout(run, delay), run };
@@ -316,6 +325,7 @@ export function ExtractScreen() {
 
   const onPhoto = async (file: File | undefined) => {
     if (!file) return;
+    readingNow.current = true;
     setReading(true);
     setNote(null);
     const started = Date.now();
@@ -389,6 +399,7 @@ export function ExtractScreen() {
       });
     } finally {
       bitmap?.close();
+      readingNow.current = false;
       setReading(false);
       if (photoRef.current) photoRef.current.value = "";
     }
@@ -397,17 +408,23 @@ export function ExtractScreen() {
   /** The book's front cover, to the computer with this text (§28). The camera app already offers a retake. */
   const onCover = async (file: File | undefined) => {
     if (!file) return;
-    const cur = current.current;
-    if (!cur) return;
+    // While the first photo is still being read the text may not have its id yet: it gets it here.
+    const cur = current.current ?? ensureCurrent(null);
     setCover("saving");
     try {
       await queueCover(cur.id, await forCover(file));
+      // Taken while the AI reads the back (V30): it waits for the text, which the server needs first.
+      if (readingNow.current || !text.trim()) {
+        coverHeld.current = true;
+        setCover("held");
+        return;
+      }
       // Make sure the text itself is on its way first (it may still be waiting to be typed into).
       if (pendingSave.current) {
         clearTimeout(pendingSave.current.timer);
         pendingSave.current.run();
       }
-      const result = await syncCovers();
+      const result = await syncCovers(cur.id);
       if (result === "loggedout") rememberAi({ ...ai, loggedIn: false });
       rememberCover(result);
     } catch {
@@ -473,6 +490,7 @@ export function ExtractScreen() {
       list = [entry, ...earlier.filter((e) => e.id !== entry.id)];
     }
     current.current = null;
+    coverHeld.current = false;
     void kvSet(CURRENT_KEY, null);
     setText("");
     void kvSet(TEXT_KEY, "");
@@ -593,7 +611,8 @@ export function ExtractScreen() {
         </p>
       )}
 
-      {has && ai.loggedIn && !reading && (
+      {/* Offered while the AI reads too, so the wait isn't wasted (V30). */}
+      {(has || reading) && ai.loggedIn && (
         <section aria-label="Front cover" className="flex flex-col gap-1">
           <button
             type="button"
@@ -608,7 +627,9 @@ export function ExtractScreen() {
             <p role="status" aria-label="Front cover saved" className={`text-center text-sm ${cover === "loggedout" ? "text-danger" : "text-muted"}`}>
               {cover === "saving"
                 ? "Saving the front cover…"
-                : cover === "saved"
+                : cover === "held"
+                  ? "✓ Front cover taken — it goes to the computer with the text."
+                  : cover === "saved"
                   ? "✓ Front cover saved for the computer"
                   : cover === "waiting"
                     ? "No signal — the front cover will be saved by itself when there's signal."

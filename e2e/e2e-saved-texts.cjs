@@ -3,7 +3,7 @@
 // appear on the computer by themselves; corrections follow; Copy, Done,
 // Delete; behind the access code; laid out for a big screen. Since V28 (§28):
 // the front cover photo, the AI's back photos kept, reporting from the computer.
-const { suite, browser, phone, visible, sleep, sql, chromium, BASE_URL } = require("./lib.cjs");
+const { suite, browser, phone, visible, sleep, sql, chromium, BASE_URL, BOOKS } = require("./lib.cjs");
 
 const cover = (page, lines) => page.evaluate((lines) => {
   const c = document.createElement("canvas"); c.width = 2400; c.height = 3200;
@@ -303,6 +303,19 @@ const t = suite();
   check("laptop: the page itself doesn't scroll", fit.page <= 1, JSON.stringify(fit));
   check("…the To do and Done lists scroll inside themselves", fit.lists.length === 2 && fit.lists.every((x) => x > 100), JSON.stringify(fit));
   await pc.screenshot({ path: ".wrangler/saved-laptop.png" });
+
+  // V30: the front cover can be taken while the AI is still reading the back.
+  await fetch(`${BOOKS}/__ai?mode=delay`, { method: "POST" });
+  await startOver();
+  await take(["fourth"]);
+  check("while the AI reads: the front cover button is offered", await visible(page.getByRole("button", { name: "Reading the text…" })) && await visible(coverArea.getByRole("button", { name: "Take a photo of the front cover" })));
+  await page.getByLabel("Front cover photo").setInputFiles({ name: "COVER.jpg", mimeType: "image/jpeg", buffer: await frontCover(page, "#5a3a10") });
+  check("…taken: it waits for the text", await visible(coverArea.getByText(/Front cover taken — it goes to the computer with the text/)));
+  check("…while the AI is still reading", await page.getByRole("button", { name: "Reading the text…" }).isVisible());
+  check("…then goes up with the text", await visible(coverArea.getByText("✓ Front cover saved for the computer"), 20000));
+  const latest = sql("SELECT text, cover_key FROM saved_texts ORDER BY created_at DESC LIMIT 1")[0];
+  check("…stored with that text", latest && latest.cover_key && /Väinö/.test(latest.text), JSON.stringify(latest));
+  await fetch(`${BOOKS}/__ai?mode=ok`, { method: "POST" });
 
   await b.close();
   t.done();

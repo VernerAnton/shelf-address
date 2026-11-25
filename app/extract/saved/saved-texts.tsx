@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
+import { CoverPanel, coverUrl } from "./cover-panel";
 
 /** How often the list checks for new texts while it's on screen. */
 const REFRESH_MS = 5000;
@@ -19,21 +20,6 @@ function when(iso: string) {
 
 const firstWords = (text: string) => text.replace(/\s+/g, " ").slice(0, 90);
 
-/** The front cover's address; a new photo has a new one, so it's never an old copy from the cache. */
-const coverUrl = (t: SavedText) => `/api/extract/texts/${t.id}/cover?v=${encodeURIComponent(t.coverAt ?? "")}`;
-
-/** The front cover as a PNG: what a clipboard takes, everywhere. */
-async function asPng(url: string): Promise<Blob> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("No picture");
-  const bitmap = await createImageBitmap(await response.blob());
-  const canvas = document.createElement("canvas");
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
-  bitmap.close();
-  return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("No picture"))), "image/png"));
-}
 
 /**
  * Saved texts (docs/spec-corrections.md §24): what Extract read on the
@@ -55,7 +41,6 @@ export function SavedTexts() {
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [pictureCopied, setPictureCopied] = useState(false);
   const [zoom, setZoom] = useState(false);
   const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -164,16 +149,6 @@ export function SavedTexts() {
     }
   };
 
-  /** Puts the front cover on the clipboard, to paste (Ctrl+V) into a listing. */
-  const copyPicture = async (t: SavedText) => {
-    try {
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": asPng(coverUrl(t)) })]);
-      setPictureCopied(true);
-      setTimeout(() => setPictureCopied(false), 2000);
-    } catch {
-      window.alert("Couldn't copy the picture. Use Download picture, or drag the picture into the other site.");
-    }
-  };
 
   /** A bad reading, reported from here: its photos and what came back go to the Photo log (§28). */
   const sendReport = async (t: SavedText, note: string) => {
@@ -287,6 +262,8 @@ export function SavedTexts() {
                 {when(text.createdAt)}
                 {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
                 {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
+                {/* How long the AI took (V33.1): one time per photo of the back. */}
+                {text.source !== "phone" && text.aiMs.length > 0 && ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}`}
                 {text.editedOnComputerAt && " · corrected on the computer"}
                 {!text.coverAt && " · no front cover photo"}
               </p>
@@ -348,31 +325,7 @@ export function SavedTexts() {
                   </div>
                 </div>
 
-                {text.coverAt && (
-                  <figure aria-label="Front cover" className="flex flex-col items-start gap-2 xl:flex-row">
-                    <button type="button" onClick={() => setZoom(true)} title="Click to see it full size" className="cursor-zoom-in">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login */}
-                      <img
-                        src={coverUrl(text)}
-                        alt="Front cover"
-                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]"
-                      />
-                    </button>
-                    {/*
-                      On a wide screen the buttons sit beside the picture, so it can be as tall as the whole text
-                      column. Its size is also held to the width the text column can spare: the text's buttons need
-                      ~30rem to stay on one row, and the list, gaps and these buttons take 66rem of the page.
-                    */}
-                    <div className="grid w-full grid-cols-2 gap-2 md:flex xl:w-auto xl:flex-col">
-                      <button type="button" onClick={() => void copyPicture(text)} className={`${button} bg-accent text-accent-contrast`}>
-                        {pictureCopied ? "Picture copied ✓" : "Copy picture"}
-                      </button>
-                      <a href={coverUrl(text)} download={`etukansi-${firstWords(text.text).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "kirja"}.jpg`} className={`${button} border border-line bg-surface`}>
-                        Download picture
-                      </a>
-                    </div>
-                  </figure>
-                )}
+                {text.coverAt && <CoverPanel text={text} button={button} onZoom={() => setZoom(true)} onChanged={load} />}
               </div>
 
               {report?.id === text.id && (

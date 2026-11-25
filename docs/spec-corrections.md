@@ -827,3 +827,18 @@ V33 joins both: BookOps is back, with Extract as reworked here. The two lines
 had both used the version numbers V26–V32; V33 is above both. Both 0012
 migrations are applied and don't touch the same tables.
 **Only one session at a time should put the app live** (see CLAUDE.md).
+
+## 32. Timers, and a small picture editor (V33.1).
+
+- **Phone:** while the AI reads, the seconds count up beside "The AI is
+  reading it"; afterwards the line says "Read by AI in 6.2 s" — the whole
+  wait, photo to text.
+- **Computer:** the line above the text says "read by AI in 4.9 s" — the AI's
+  own time, one per photo of the back ("4.9 s + 6.1 s"), from the kept
+  readings (§28).
+- **Picture editor** under Copy picture / Download picture: ↺ and ↻ turn the
+  front cover a quarter either way; **Crop** — drag across the picture, then
+  Save crop or Cancel; **Undo last change** puts back the picture as it was
+  before the last turn or crop (one step). Edits are saved to the picture on
+  the server (JPEG, quality 0.92), so Copy, Download and the thumbnail show
+  the edited one, on every computer.

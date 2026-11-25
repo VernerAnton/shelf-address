@@ -178,6 +178,39 @@ const t = suite();
   check("…Esc closes it", await full.waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false));
   check("no Download .txt any more", (await pc.getByRole("button", { name: "Download .txt" }).count()) === 0);
 
+  // V33.1: how long the AI took, and a small picture editor — rotate, crop, undo.
+  check("computer: says how long the AI took", /read by AI in \d+\.\d s/.test(await pc.getByRole("region", { name: "Selected text" }).locator("p").first().innerText()));
+  const coverSize = async () => jpegSize(await (await pc.request.get(`/api/extract/texts/${newest.id}/cover`)).body());
+  const waitForSize = async (want) => {
+    for (let i = 0; i < 20; i++) { const got = await coverSize(); if (want(got)) return got; await sleep(300); }
+    return coverSize();
+  };
+  const tall = await coverSize();
+  const tools = figure.getByRole("group", { name: "Edit the picture" });
+  await tools.getByRole("button", { name: "Rotate right" }).click();
+  const turned = await waitForSize((z) => z && z.width === tall.height);
+  check("Rotate right: turned a quarter (width and height swap)", turned && turned.width === tall.height && turned.height === tall.width, JSON.stringify([tall, turned]));
+  await tools.getByRole("button", { name: "Rotate left" }).click();
+  const back = await waitForSize((z) => z && z.width === tall.width);
+  check("Rotate left: turned back", back && back.width === tall.width && back.height === tall.height, JSON.stringify(back));
+  await tools.getByRole("button", { name: "Crop" }).click();
+  const area = figure.getByLabel("Crop area");
+  check("Crop: asks to drag across the picture", await visible(figure.getByText(/Drag across the picture/)) && await figure.getByRole("button", { name: "Save crop" }).isDisabled());
+  const cropBox = await area.boundingBox();
+  await pc.mouse.move(cropBox.x + cropBox.width * 0.2, cropBox.y + cropBox.height * 0.2);
+  await pc.mouse.down();
+  await pc.mouse.move(cropBox.x + cropBox.width * 0.7, cropBox.y + cropBox.height * 0.6, { steps: 6 });
+  await pc.mouse.up();
+  check("…the chosen part shows", await visible(figure.getByLabel("Chosen part")));
+  await figure.getByRole("button", { name: "Save crop" }).click();
+  const cropped = await waitForSize((z) => z && z.width < tall.width * 0.7);
+  check("Save crop: the picture is cut to the chosen part", cropped && cropped.width < tall.width * 0.7 && cropped.height < tall.height * 0.7 && cropped.width > tall.width * 0.3, JSON.stringify([tall, cropped]));
+  check("…and the editor closes", await visible(tools.getByRole("button", { name: "Crop" })));
+  await tools.getByRole("button", { name: "Undo last change" }).click();
+  const undone = await waitForSize((z) => z && z.width === tall.width);
+  check("Undo last change: the whole picture is back", undone && undone.width === tall.width && undone.height === tall.height, JSON.stringify(undone));
+  check("…and Undo goes (one step only)", await tools.getByRole("button", { name: "Undo last change" }).waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false));
+
   // Reporting from the computer (V28): the back photo, the AI's answer and the text now go to the Photo log.
   await pc.getByRole("button", { name: "Report a problem" }).click();
   const pcReport = pc.getByRole("region", { name: "Report a problem" });
@@ -333,11 +366,14 @@ const t = suite();
   await fetch(`${BOOKS}/__ai?mode=delay`, { method: "POST" });
   await startOver();
   await take(["fourth"]);
+  check("while the AI reads: the seconds count up (V33.1)", await visible(page.getByLabel("Time so far")) && await page.waitForFunction(() => Number(document.querySelector("[aria-label='Time so far']")?.textContent.replace(/\D/g, "")) >= 1, null, { timeout: 5000 }).then(() => true, () => false));
   check("while the AI reads: the front cover button is offered", await visible(page.getByRole("button", { name: "Reading the text…" })) && await visible(coverArea.getByRole("button", { name: "Take a photo of the front cover" })));
   await page.getByLabel("Front cover photo").setInputFiles({ name: "COVER.jpg", mimeType: "image/jpeg", buffer: await frontCover(page, "#5a3a10") });
   check("…taken: it waits for the text", await visible(coverArea.getByText(/Front cover taken — it goes to the computer with the text/)));
   check("…while the AI is still reading", await page.getByRole("button", { name: "Reading the text…" }).isVisible());
   check("…then goes up with the text", await visible(coverArea.getByText("✓ Front cover saved for the computer"), 20000));
+  const took = await page.getByLabel("Time taken").innerText().catch(() => "");
+  check("phone: says how long the reading took (V33.1)", /in (\d+\.\d) s/.test(took) && Number(/in (\d+\.\d)/.exec(took)[1]) >= 3, took);
   const latest = sql("SELECT text, cover_key FROM saved_texts ORDER BY created_at DESC LIMIT 1")[0];
   check("…stored with that text", latest && latest.cover_key && /Väinö/.test(latest.text), JSON.stringify(latest));
   await fetch(`${BOOKS}/__ai?mode=ok`, { method: "POST" });

@@ -29,6 +29,8 @@ export type SavedText = {
   coverAt: string | null;
   /** How many back-cover photos the AI read for it (kept for reporting). */
   readings: number;
+  /** How long the AI took for each of them, in ms, oldest first (V33.1). */
+  aiMs: number[];
 };
 
 export class SavedTextError extends Error {
@@ -54,6 +56,7 @@ type Row = {
   cover_key: string | null;
   cover_at: string | null;
   readings: number;
+  ai_ms: string | null;
 };
 const fromRow = (r: Row): SavedText => ({
   id: r.id,
@@ -65,6 +68,7 @@ const fromRow = (r: Row): SavedText => ({
   editedOnComputerAt: r.edited_on_computer_at,
   coverAt: r.cover_key ? r.cover_at : null,
   readings: r.readings ?? 0,
+  aiMs: (r.ai_ms ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0),
 });
 
 function validId(id: string) {
@@ -164,7 +168,10 @@ export async function listTexts(limit = 200): Promise<SavedText[]> {
   await prune();
   const { results } = await (await getDb())
     .prepare(
-      `SELECT t.*, (SELECT COUNT(*) FROM saved_text_readings r WHERE r.text_id = t.id) AS readings
+      `SELECT t.*, (SELECT COUNT(*) FROM saved_text_readings r WHERE r.text_id = t.id) AS readings,
+         (SELECT group_concat(ms) FROM (
+            SELECT CAST(json_extract(r.details, '$.ms') AS INTEGER) AS ms FROM saved_text_readings r
+            WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_ms
        FROM saved_texts t ORDER BY t.created_at DESC LIMIT ?`,
     )
     .bind(limit)

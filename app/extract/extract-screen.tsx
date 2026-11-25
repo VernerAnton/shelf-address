@@ -257,6 +257,9 @@ export function ExtractScreen() {
   const [loaded, setLoaded] = useState(false);
   const [text, setText] = useState("");
   const [reading, setReading] = useState(false);
+  // The stopwatch while a photo is read (V33.1): when it started, and the time now, ticking.
+  const [readingSince, setReadingSince] = useState<number | null>(null);
+  const [now, setNow] = useState(0);
   const [note, setNote] = useState<{ kind: "warn" | "ok" | "error"; text: string } | null>(null);
   const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
   const [save, setSave] = useState<SyncResult | "saving" | null>(null);
@@ -385,6 +388,13 @@ export function ExtractScreen() {
     return () => document.removeEventListener("visibilitychange", flush);
   }, []);
 
+  // The stopwatch ticks while a photo is read.
+  useEffect(() => {
+    if (!reading) return;
+    const timer = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(timer);
+  }, [reading]);
+
   const change = (next: string, readBy: "ai" | "phone" | null = null) => {
     setText(next);
     void kvSet(TEXT_KEY, next);
@@ -401,6 +411,9 @@ export function ExtractScreen() {
   const onPhoto = async (file: File | undefined) => {
     if (!file) return;
     readingNow.current = true;
+    const since = Date.now();
+    setReadingSince(since);
+    setNow(since);
     setReading(true);
     setNote(null);
     const started = Date.now();
@@ -603,6 +616,8 @@ export function ExtractScreen() {
 
   if (!loaded) return <p className="text-muted">Loading…</p>;
 
+  const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
+
   const has = text.trim().length > 0;
   const words = has ? text.trim().split(/\s+/).length : 0;
   const button = "flex h-12 items-center justify-center rounded-xl font-medium disabled:opacity-40";
@@ -660,11 +675,18 @@ export function ExtractScreen() {
       )}
       {reading ? (
         <p className="-mt-2 text-center text-xs text-muted">
-          {ai.loggedIn ? "The AI is reading it — usually a few seconds." : "This can take a little while on some phones."}
+          {ai.loggedIn ? "The AI is reading it — usually a few seconds." : "This can take a little while on some phones."}{" "}
+          {readingSince !== null && (
+            <span aria-label="Time so far" className="font-mono tabular-nums">
+              {Math.floor(Math.max(0, now - readingSince) / 1000)} s
+            </span>
+          )}
         </p>
       ) : ai.loggedIn ? (
         <p className="-mt-2 text-center text-xs text-muted">
-          Read by AI ·{" "}
+          Read by AI
+          {/* How long the whole wait was, photo to text (V33.1). */}
+          {last?.readBy === "ai" && last.reply && <span aria-label="Time taken"> in {seconds(last.ms)}</span>} ·{" "}
           <Link href="/extract/saved" className="font-medium text-accent">
             Saved texts
           </Link>{" "}

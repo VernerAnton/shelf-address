@@ -4,11 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import { CameraIcon } from "@/components/icons";
 import Link from "next/link";
 import { kvGet, kvSet } from "@/lib/client/kv";
-import { queueText, syncTexts, type SyncResult } from "@/lib/client/saved-texts";
+import { queueCover, queueText, syncCovers, syncTexts, type CoverResult, type SyncResult } from "@/lib/client/saved-texts";
 import { readTextFromPhoto, warmOcr } from "@/lib/client/ocr";
 import { logPhoto } from "@/lib/client/photo-log";
 import type { AiDetails } from "@/lib/extract-ai";
-import { textFileName, tidyText } from "@/lib/extract-text";
+import { tidyText } from "@/lib/extract-text";
 import { LoginForm } from "./_components/login-form";
 
 const TEXT_KEY = "extract:text";
@@ -16,7 +16,16 @@ const TEXT_KEY = "extract:text";
 const LOGIN_KEY = "extract:login";
 /** The saved text the screen is working on (§24): its id, when it was started, how it was read. */
 const CURRENT_KEY = "extract:current";
-type Current = { id: string; createdAt: string; source: "ai" | "phone" };
+type Current = { id: string; createdAt: string; source: "ai" | "phone"; cover?: CoverResult };
+/**
+ * Every text this phone has read, kept on the phone for 7 days (§28) so Start
+ * over never loses one — even on a phone that isn't logged in.
+ */
+const HISTORY_KEY = "extract:history";
+type Earlier = { id: string; text: string; createdAt: string; updatedAt: string; source: "ai" | "phone"; cover?: CoverResult };
+const HISTORY_DAYS = 7;
+/** Front covers go to the computer at most this big (§28). */
+const COVER_SIDE = 1600;
 /** How long typing pauses before a correction is saved. */
 const SAVE_AFTER_MS = 1000;
 /** Below this (Tesseract's 0–100), warn that the text needs checking. */
@@ -52,6 +61,28 @@ type LastRead = {
 
 /** The model stopped because it ran out of room: the end is missing. */
 const stoppedEarly = (d: AiDetails | null) => d?.finishReason === "length";
+
+/** The front cover, made 1600 px on its long side for the computer. */
+async function forCover(file: File): Promise<Blob> {
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, COVER_SIDE / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
+    canvas.width = canvas.height = 0;
+    if (!blob) throw new Error("Couldn't prepare the photo");
+    return blob;
+  } finally {
+    bitmap.close();
+  }
+}
+
+function when(iso: string) {
+  return new Date(iso).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 /** A small copy for the photo log's list. */
 async function thumbnail(bitmap: ImageBitmap): Promise<Blob | null> {
@@ -110,10 +141,11 @@ class AiUnavailable extends Error {
   }
 }
 
-async function readWithAi(jpeg: Blob): Promise<{ text: string; details: AiDetails | null }> {
+async function readWithAi(jpeg: Blob, textId: string): Promise<{ text: string; details: AiDetails | null }> {
   let response: Response;
   try {
-    response = await fetch("/api/extract", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg" } });
+    // The text's id: the server keeps the photo and answer with it, for reports from the computer (§28).
+    response = await fetch("/api/extract", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg", "x-text-id": textId } });
   } catch {
     throw new AiUnavailable("no signal");
   }
@@ -125,12 +157,10 @@ async function readWithAi(jpeg: Blob): Promise<{ text: string; details: AiDetail
 /**
  * Extract (docs/spec-corrections.md §22): photograph a book's back-cover
  * text and get it to the computer, to make a new back cover for a copy that
- * lacks one. The text is read on the phone (Finnish and English), tidied,
- * shown for correcting, then shared as a .txt file — to OneDrive, email or
- * anything else in the phone's share menu — or copied.
+ * lacks one. The text is read, tidied and shown for correcting.
  *
- * The text is kept on the phone as it's edited, so leaving for OneDrive (or
- * the phone closing the app while its camera is open) loses nothing.
+ * The text is kept on the phone as it's edited, so the phone closing the app
+ * while its camera is open loses nothing.
  *
  * AI reading (§23): once this phone has logged in with the access code, the
  * photo is read by a vision model through the app's server — far better on
@@ -139,29 +169,48 @@ async function readWithAi(jpeg: Blob): Promise<{ text: string; details: AiDetail
  *
  * Saved texts (§24): on a logged-in phone, each text — and every correction —
  * is saved to the server by itself, so it's on the computer under Saved texts
- * within seconds. "Start over" begins a new one. Without signal it waits.
+ * within seconds. Without signal it waits.
+ *
+ * Since V28 (§28): no Share or Copy (Saved texts does that job); a big red
+ * Report button; Start over goes straight to the camera for the next book; a
+ * front cover photo goes with the text to the computer; and the phone keeps
+ * its own texts for 7 days under "Earlier texts on this phone".
  */
 export function ExtractScreen() {
   const photoRef = useRef<HTMLInputElement>(null);
+  const coverRef = useRef<HTMLInputElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [text, setText] = useState("");
   const [reading, setReading] = useState(false);
   const [note, setNote] = useState<{ kind: "warn" | "ok" | "error"; text: string } | null>(null);
-  const [copied, setCopied] = useState(false);
   const [ai, setAi] = useState<Ai>({ configured: false, loggedIn: false });
   const [save, setSave] = useState<SyncResult | "saving" | null>(null);
+  const [cover, setCover] = useState<CoverResult | "saving" | null>(null);
   const [last, setLast] = useState<LastRead | null>(null);
   const [report, setReport] = useState<"closed" | "open" | "sending" | "sent">("closed");
   const [reportNote, setReportNote] = useState("");
+  const [earlier, setEarlier] = useState<Earlier[]>([]);
+  const [showEarlier, setShowEarlier] = useState(false);
   const current = useRef<Current | null>(null);
   const pendingSave = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
 
   useEffect(() => {
-    void Promise.all([kvGet<string>(TEXT_KEY), kvGet<Ai>(LOGIN_KEY), kvGet<Current | null>(CURRENT_KEY), kvGet<LastRead | null>(LAST_KEY)]).then(([saved, known, cur, lastRead]) => {
+    void Promise.all([
+      kvGet<string>(TEXT_KEY),
+      kvGet<Ai>(LOGIN_KEY),
+      kvGet<Current | null>(CURRENT_KEY),
+      kvGet<LastRead | null>(LAST_KEY),
+      kvGet<Earlier[]>(HISTORY_KEY),
+    ]).then(([saved, known, cur, lastRead, history]) => {
       setText(saved ?? "");
       if (known) setAi(known);
       setLast(lastRead ?? null);
       current.current = cur ?? null;
+      setCover(cur?.cover ?? null);
+      const cutoff = new Date(Date.now() - HISTORY_DAYS * 24 * 3600 * 1000).toISOString();
+      const kept = (history ?? []).filter((e) => e.updatedAt >= cutoff);
+      setEarlier(kept);
+      if (kept.length !== (history ?? []).length) void kvSet(HISTORY_KEY, kept);
       setLoaded(true);
     });
     void fetch("/api/extract/login", { cache: "no-store" })
@@ -174,6 +223,12 @@ export function ExtractScreen() {
         if (state.loggedIn) {
           const result = await syncTexts();
           if (current.current) setSave(result);
+          const covers = await syncCovers();
+          if (current.current?.cover === "waiting" && covers === "saved") {
+            current.current = { ...current.current, cover: "saved" };
+            void kvSet(CURRENT_KEY, current.current);
+            setCover("saved");
+          }
         }
       })
       .catch(() => {
@@ -194,22 +249,37 @@ export function ExtractScreen() {
     setSave(null);
   };
 
-  /** Sends the text to Saved texts (logged-in phones only), now or after typing pauses. */
-  const saveSoon = (next: string, readBy: "ai" | "phone" | null, delay: number) => {
-    if (!ai.loggedIn || !next.trim()) return;
-    if (pendingSave.current) clearTimeout(pendingSave.current.timer);
-    const now = new Date().toISOString();
+  /** The text being worked on: its id is made when its first photo is taken. */
+  const ensureCurrent = (readBy: "ai" | "phone" | null): Current => {
     const before = current.current;
     // Any part read by the phone reader marks the text as worth checking.
     const cur: Current = before
       ? { ...before, source: readBy === "phone" ? "phone" : before.source }
-      : { id: crypto.randomUUID(), createdAt: now, source: readBy ?? "ai" };
+      : { id: crypto.randomUUID(), createdAt: new Date().toISOString(), source: readBy ?? "ai" };
     current.current = cur;
     void kvSet(CURRENT_KEY, cur);
+    return cur;
+  };
+
+  const rememberCover = (state: CoverResult) => {
+    setCover(state);
+    if (current.current) {
+      current.current = { ...current.current, cover: state };
+      void kvSet(CURRENT_KEY, current.current);
+    }
+  };
+
+  /** Sends the text to Saved texts (logged-in phones only), now or after typing pauses. */
+  const saveSoon = (next: string, readBy: "ai" | "phone" | null, delay: number) => {
+    if (!next.trim()) return;
+    const cur = ensureCurrent(readBy);
+    if (!ai.loggedIn) return;
+    if (pendingSave.current) clearTimeout(pendingSave.current.timer);
+    const now = new Date().toISOString();
     setSave("saving");
     const run = () => {
       pendingSave.current = null;
-      void queueText({ ...cur, text: next.trim(), updatedAt: now })
+      void queueText({ id: cur.id, createdAt: cur.createdAt, source: cur.source, text: next.trim(), updatedAt: now })
         .then(syncTexts)
         .then((result) => {
           setSave(result);
@@ -219,7 +289,7 @@ export function ExtractScreen() {
     pendingSave.current = { timer: setTimeout(run, delay), run };
   };
 
-  // Leaving the app (for OneDrive, the camera…): save a pending correction now.
+  // Leaving the app (for the camera…): save a pending correction now.
   useEffect(() => {
     const flush = () => {
       if (document.visibilityState === "hidden" && pendingSave.current) {
@@ -260,7 +330,7 @@ export function ExtractScreen() {
       if (ai.loggedIn) {
         try {
           if (!jpeg) throw new AiUnavailable("the photo couldn't be prepared");
-          ({ text: read, details } = await readWithAi(jpeg));
+          ({ text: read, details } = await readWithAi(jpeg, ensureCurrent(null).id));
         } catch (e) {
           const reason = e instanceof AiUnavailable ? e : new AiUnavailable("it failed");
           if (reason.loggedOut) rememberAi({ ...ai, loggedIn: false });
@@ -307,7 +377,7 @@ export function ExtractScreen() {
           : why
             ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
             : confidence !== null && confidence < SHAKY
-              ? { kind: "warn", text: "Parts of this may be read wrong — check it before sharing. A sharper, flatter, better-lit photo helps." }
+              ? { kind: "warn", text: "Parts of this may be read wrong — check it before using it. A sharper, flatter, better-lit photo helps." }
               : null,
       );
     } catch {
@@ -324,26 +394,56 @@ export function ExtractScreen() {
     }
   };
 
-  /** Sends the last photo, what came back and the note to the Photo log (§27). */
+  /** The book's front cover, to the computer with this text (§28). The camera app already offers a retake. */
+  const onCover = async (file: File | undefined) => {
+    if (!file) return;
+    const cur = current.current;
+    if (!cur) return;
+    setCover("saving");
+    try {
+      await queueCover(cur.id, await forCover(file));
+      // Make sure the text itself is on its way first (it may still be waiting to be typed into).
+      if (pendingSave.current) {
+        clearTimeout(pendingSave.current.timer);
+        pendingSave.current.run();
+      }
+      const result = await syncCovers();
+      if (result === "loggedout") rememberAi({ ...ai, loggedIn: false });
+      rememberCover(result);
+    } catch {
+      setCover(null);
+      setNote({ kind: "error", text: "Couldn't use that photo of the front cover. Try again." });
+    } finally {
+      if (coverRef.current) coverRef.current.value = "";
+    }
+  };
+
+  /** Sends the last photo, what came back, the text now and the note to the Photo log (§27). */
   const sendReport = async () => {
-    if (!last) return;
     setReport("sending");
+    const said = reportNote.trim();
+    const now = text.trim();
     try {
       await logPhoto(
         {
-          takenAt: last.takenAt,
+          takenAt: last?.takenAt ?? new Date().toISOString(),
           outcome: "error",
           isbns: [],
-          error: reportNote.trim() ? `Reported: ${reportNote.trim()}` : "Reported (no note)",
-          ocrText: reportText(last, reportNote.trim()),
-          durationMs: last.ms,
-          width: last.width,
-          height: last.height,
-          bytes: last.bytes,
-          mime: last.mime,
+          error: said ? `Reported: ${said}` : "Reported (no note)",
+          ocrText: [
+            last ? reportText(last, said) : `Note: ${said || "(none)"}\n(The photo isn't on this phone any more.)`,
+            "",
+            "— The text now —",
+            now || "(empty)",
+          ].join("\n"),
+          durationMs: last?.ms ?? null,
+          width: last?.width ?? null,
+          height: last?.height ?? null,
+          bytes: last?.bytes ?? null,
+          mime: last?.mime ?? null,
         },
-        last.photo,
-        last.thumb,
+        last?.photo ?? null,
+        last?.thumb ?? null,
         { always: true },
       );
       setReport("sent");
@@ -353,47 +453,59 @@ export function ExtractScreen() {
     }
   };
 
-  const share = async () => {
-    const body = text.trim();
-    const file = new File([body + "\n"], textFileName(body, new Date()), { type: "text/plain" });
-    try {
-      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: file.name });
-      else if (navigator.share) await navigator.share({ text: body });
-      else {
-        // No share menu (a computer's browser): save the file instead.
-        const url = URL.createObjectURL(file);
-        const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      }
-    } catch (e) {
-      if ((e as { name?: string })?.name !== "AbortError") setNote({ kind: "error", text: "Couldn't share. Try Copy instead." });
-    }
-  };
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text.trim());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setNote({ kind: "error", text: "Couldn't copy. Select the text and copy it by hand." });
-    }
-  };
-
-  const startOver = () => {
-    if (!window.confirm("Clear the text and start over?")) return;
-    // What was there stays in Saved texts; the next text is a new one.
+  /** Puts the text on screen away into Earlier texts (if there is one), and clears the screen. */
+  const putAway = (): Earlier[] => {
     if (pendingSave.current) {
       clearTimeout(pendingSave.current.timer);
       pendingSave.current.run();
     }
+    let list = earlier;
+    const cur = current.current;
+    if (text.trim()) {
+      const entry: Earlier = {
+        id: cur?.id ?? crypto.randomUUID(),
+        text: text.trim(),
+        createdAt: cur?.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        source: cur?.source ?? "ai",
+        cover: cur?.cover,
+      };
+      list = [entry, ...earlier.filter((e) => e.id !== entry.id)];
+    }
     current.current = null;
     void kvSet(CURRENT_KEY, null);
-    change("");
+    setText("");
+    void kvSet(TEXT_KEY, "");
     setNote(null);
     setSave(null);
+    setCover(null);
     remember(null);
+    return list;
+  };
+
+  const keepEarlier = (list: Earlier[]) => {
+    setEarlier(list);
+    void kvSet(HISTORY_KEY, list);
+  };
+
+  /** Start over: no question — the text is kept (Saved texts, and on this phone); straight to the camera. */
+  const startOver = () => {
+    keepEarlier(putAway());
+    setShowEarlier(false);
+    photoRef.current?.click();
+  };
+
+  /** Brings an earlier text back on screen, to correct or report it. */
+  const openEarlier = (e: Earlier) => {
+    const list = putAway().filter((x) => x.id !== e.id);
+    keepEarlier(list);
+    current.current = { id: e.id, createdAt: e.createdAt, source: e.source, cover: e.cover };
+    void kvSet(CURRENT_KEY, current.current);
+    setText(e.text);
+    void kvSet(TEXT_KEY, e.text);
+    setCover(e.cover ?? null);
+    setShowEarlier(false);
+    window.scrollTo({ top: 0 });
   };
 
   if (!loaded) return <p className="text-muted">Loading…</p>;
@@ -428,6 +540,16 @@ export function ExtractScreen() {
         aria-label="Text photo"
         tabIndex={-1}
         onChange={(e) => void onPhoto(e.target.files?.[0])}
+      />
+      <input
+        ref={coverRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        aria-label="Front cover photo"
+        tabIndex={-1}
+        onChange={(e) => void onCover(e.target.files?.[0])}
       />
       <button
         type="button"
@@ -471,6 +593,31 @@ export function ExtractScreen() {
         </p>
       )}
 
+      {has && ai.loggedIn && !reading && (
+        <section aria-label="Front cover" className="flex flex-col gap-1">
+          <button
+            type="button"
+            disabled={cover === "saving"}
+            onClick={() => coverRef.current?.click()}
+            className={`${button} gap-2 border border-line bg-surface`}
+          >
+            <CameraIcon className="size-5" />
+            Take a photo of the front cover
+          </button>
+          {cover && (
+            <p role="status" aria-label="Front cover saved" className={`text-center text-sm ${cover === "loggedout" ? "text-danger" : "text-muted"}`}>
+              {cover === "saving"
+                ? "Saving the front cover…"
+                : cover === "saved"
+                  ? "✓ Front cover saved for the computer"
+                  : cover === "waiting"
+                    ? "No signal — the front cover will be saved by itself when there's signal."
+                    : "Not saved: this phone isn't logged in any more. Log in again above."}
+            </p>
+          )}
+        </section>
+      )}
+
       {has && (
         <section aria-label="Extracted text" className="flex flex-col gap-3">
           <label htmlFor="extract-text" className="flex items-baseline justify-between text-sm font-medium">
@@ -507,25 +654,14 @@ export function ExtractScreen() {
               )}
             </p>
           )}
-          <div className="grid grid-cols-2 gap-2">
-            <button type="button" onClick={() => void share()} className={`${button} bg-accent text-accent-contrast`}>
-              Share
-            </button>
-            <button type="button" onClick={() => void copy()} className={`${button} border border-line bg-surface`}>
-              {copied ? "Copied ✓" : "Copy"}
-            </button>
-          </div>
-          <p className="text-xs text-muted">
-            Share sends it as a text file: choose OneDrive to have it on the computer, or email, or anything else.
-          </p>
         </section>
       )}
 
-      {last && !reading && (
-        <section aria-label="Report a problem" className="flex flex-col gap-2 border-t border-line pt-3">
+      {(has || last) && !reading && (
+        <section aria-label="Report a problem" className="flex flex-col gap-2">
           {report === "closed" ? (
-            <button type="button" onClick={() => setReport("open")} className="self-start text-sm text-muted underline">
-              Text wrong or cut off? Report the last photo
+            <button type="button" onClick={() => setReport("open")} className={`${button} h-14 bg-danger text-lg text-background`}>
+              Report a problem
             </button>
           ) : report === "sent" ? (
             <p role="status" className="text-sm text-muted">
@@ -536,7 +672,7 @@ export function ExtractScreen() {
               , to find out what went wrong.
             </p>
           ) : (
-            <>
+            <div className="flex flex-col gap-2 rounded-xl border border-danger/40 p-3">
               <label htmlFor="report-note" className="text-sm font-medium">
                 What went wrong? <span className="font-normal text-muted">(optional)</span>
               </label>
@@ -550,13 +686,39 @@ export function ExtractScreen() {
               />
               <p className="text-xs text-muted">Sends the last photo and exactly what came back from it, so we can see why.</p>
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" disabled={report === "sending"} onClick={() => void sendReport()} className={`${button} bg-accent text-accent-contrast`}>
+                <button type="button" disabled={report === "sending"} onClick={() => void sendReport()} className={`${button} bg-danger text-background`}>
                   {report === "sending" ? "Sending…" : "Send report"}
                 </button>
                 <button type="button" onClick={() => setReport("closed")} className={`${button} border border-line bg-surface`}>
                   Cancel
                 </button>
               </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {earlier.length > 0 && !reading && (
+        <section aria-label="Earlier texts on this phone" className="flex flex-col gap-2 border-t border-line pt-3">
+          <button type="button" onClick={() => setShowEarlier((v) => !v)} className="self-start text-sm text-muted underline">
+            {showEarlier ? "Hide earlier texts" : `Earlier texts on this phone (${earlier.length})`}
+          </button>
+          {showEarlier && (
+            <>
+              <p className="text-xs text-muted">Kept on this phone for 7 days. Tap one to open it again.</p>
+              <ul className="overflow-hidden rounded-xl border border-line bg-surface">
+                {earlier.map((e) => (
+                  <li key={e.id} className="border-b border-line last:border-0">
+                    <button type="button" onClick={() => openEarlier(e)} className="flex w-full flex-col gap-1 px-4 py-3 text-left active:bg-line/50">
+                      <span className="flex justify-between gap-2 text-xs text-muted">
+                        <span>{when(e.createdAt)}</span>
+                        {e.cover === "saved" && <span>front cover ✓</span>}
+                      </span>
+                      <span className="line-clamp-2 text-sm">{e.text.replace(/\s+/g, " ").slice(0, 90)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </>
           )}
         </section>

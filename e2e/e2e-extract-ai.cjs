@@ -24,6 +24,12 @@ const t = suite();
   const page = await phone(b, t);
   const box = page.getByLabel(/Text — check and correct it/);
   const login = page.getByRole("form", { name: "AI reading login" });
+  // Start over goes straight to the camera (V28): the camera is let go unused here.
+  const startOver = async () => {
+    const camera = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+    await page.getByRole("button", { name: "Start over" }).click();
+    return camera;
+  };
   const take = async (buffer) => page.getByLabel("Text photo").setInputFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer });
 
   // Not logged in: the rest of the app asks for nothing.
@@ -43,8 +49,7 @@ const t = suite();
   await take(await cover(page, PHONE_TEXT));
   check("not logged in: the phone reads it", /Kotimainen romaani/.test(await box.inputValue().catch(() => "")) || await visible(box, 120000) && /Kotimainen/.test(await box.inputValue()));
   check("…AI not asked", (await ai()).requests.length === 0);
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
 
   // Wrong code, then the right one.
   await login.getByLabel(/needs the access code/).fill("wrong");
@@ -71,13 +76,13 @@ const t = suite();
 
   // Start over sits at the top, right under the photo button (V26).
   const another = page.getByRole("button", { name: "Add another photo" });
-  const startOver = page.getByRole("button", { name: "Start over" });
-  const [ya, ys, yt] = await Promise.all([another, startOver, box].map((l) => l.boundingBox().then((r) => r && r.y)));
-  check("Start over right under Add another photo, above the text", ya < ys && ys < yt && (await startOver.count()) === 1, JSON.stringify([ya, ys, yt]));
+  const startOverButton = page.getByRole("button", { name: "Start over" });
+  const [ya, ys, yt] = await Promise.all([another, startOverButton, box].map((l) => l.boundingBox().then((r) => r && r.y)));
+  check("Start over right under Add another photo, above the text", ya < ys && ys < yt && (await startOverButton.count()) === 1, JSON.stringify([ya, ys, yt]));
 
   // Report a reading (V26): the note is optional.
   const reportArea = page.getByRole("region", { name: "Report a problem" });
-  await reportArea.getByRole("button", { name: /Report the last photo/ }).click();
+  await reportArea.getByRole("button", { name: "Report a problem" }).click();
   check("report form: note marked optional", await visible(reportArea.getByText("(optional)")));
   await reportArea.getByRole("button", { name: "Send report" }).click();
   check("report sent without a note", await visible(reportArea.getByText(/✓ Reported/), 15000));
@@ -86,8 +91,8 @@ const t = suite();
   await ai("length");
   await take(await cover(page, PHONE_TEXT));
   check("AI stopped early: warned the end may be missing", await visible(page.getByText(/The AI stopped early — the end of the text may be missing/), 30000));
-  check("…and the report link is back for the new photo", await visible(reportArea.getByRole("button", { name: /Report the last photo/ })));
-  await reportArea.getByRole("button", { name: /Report the last photo/ }).click();
+  check("…and the Report button is back for the new photo", await visible(reportArea.getByRole("button", { name: "Report a problem" })));
+  await reportArea.getByRole("button", { name: "Report a problem" }).click();
   await reportArea.getByLabel(/What went wrong/).fill("cut off after the first sentence");
   await reportArea.getByRole("button", { name: "Send report" }).click();
   check("report with a note sent", await visible(reportArea.getByText(/✓ Reported/), 15000));
@@ -123,8 +128,7 @@ const t = suite();
 
   // The spending limit reached: the phone reads it instead, and says why.
   await ai("limit");
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
   await take(await cover(page, PHONE_TEXT));
   check("limit used up: the phone reads it instead", await visible(page.getByText(/The AI couldn't read it \(The AI's spending limit is used up for now\), so the phone did/), 120000));
   check("…with the phone's text", /Kotimainen/.test(await box.inputValue()));

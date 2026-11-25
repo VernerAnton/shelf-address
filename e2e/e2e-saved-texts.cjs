@@ -1,7 +1,8 @@
 // seed: places
 // Saved texts (spec-corrections §24): Extract's texts from a logged-in phone
-// appear on the computer by themselves; corrections follow; Copy, Download,
-// Done, Delete; behind the access code; laid out for a big screen.
+// appear on the computer by themselves; corrections follow; Copy, Done,
+// Delete; behind the access code; laid out for a big screen. Since V28 (§28):
+// the front cover photo, the AI's back photos kept, reporting from the computer.
 const { suite, browser, phone, visible, sleep, sql, chromium, BASE_URL } = require("./lib.cjs");
 
 const cover = (page, lines) => page.evaluate((lines) => {
@@ -11,6 +12,24 @@ const cover = (page, lines) => page.evaluate((lines) => {
   lines.forEach((l, i) => x.fillText(l, 300, 500 + i * 100));
   return c.toDataURL("image/jpeg", 0.9).split(",")[1];
 }, lines).then((b64) => Buffer.from(b64, "base64"));
+// A front cover photo straight from a phone camera (3000×4000).
+const frontCover = (page, colour) => page.evaluate((colour) => {
+  const c = document.createElement("canvas"); c.width = 3000; c.height = 4000;
+  const x = c.getContext("2d"); x.fillStyle = colour; x.fillRect(0, 0, 3000, 4000);
+  for (let i = 0; i < 400; i++) { x.fillStyle = `hsl(${(i * 37) % 360} 60% 50%)`; x.fillRect((i * 131) % 2900, (i * 197) % 3900, 100, 100); }
+  x.fillStyle = "#fff"; x.font = "bold 220px Georgia, serif"; x.fillText("TUNTEMATON", 300, 1200);
+  return c.toDataURL("image/jpeg", 0.9).split(",")[1];
+}, colour).then((b64) => Buffer.from(b64, "base64"));
+// A JPEG's size, from its SOF marker.
+const jpegSize = (buf) => {
+  for (let i = 2; i < buf.length - 9; ) {
+    if (buf[i] !== 0xff) break;
+    const marker = buf[i + 1], len = buf.readUInt16BE(i + 2);
+    if (marker >= 0xc0 && marker <= 0xc2) return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+    i += 2 + len;
+  }
+  return null;
+};
 const AI_TEXT = "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.";
 const logIn = async (page) => {
   const form = page.getByRole("form", { name: "AI reading login" });
@@ -30,6 +49,12 @@ const t = suite();
   pc.on("pageerror", (e) => t.errors.push(String(e)));
   const rows = () => sql("SELECT id, text, source, done_at FROM saved_texts ORDER BY created_at");
   const box = page.getByLabel(/Text — check and correct it/);
+  // Start over goes straight to the camera (V28); the camera is let go unused here.
+  const startOver = async () => {
+    const camera = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+    await page.getByRole("button", { name: "Start over" }).click();
+    return camera;
+  };
   const take = async (lines) => page.getByLabel("Text photo").setInputFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer: await cover(page, lines) });
 
   // Not logged in anywhere: nothing saved, and the list needs the code.
@@ -56,8 +81,7 @@ const t = suite();
   check("computer: logged in, empty list explained", await visible(pc.getByText(/Nothing saved yet/)));
 
   // Phone logs in; a reading is saved and shows on the computer by itself.
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
   await logIn(page);
   await visible(page.getByText(/Read by AI/));
   await take(["anything"]);
@@ -77,8 +101,7 @@ const t = suite();
   check("still one text, not two", rows().length === 1);
 
   // Start over: a new text, newest first.
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
   check("start over keeps the first one saved", rows().length === 1);
   await sleep(1100); // a different minute isn't needed, just a later time
   await take(["second"]);
@@ -87,17 +110,72 @@ const t = suite();
   check("start over: the next reading is a new text", rows().length === 2);
   check("computer: both listed, newest first", await pc.waitForFunction(() => document.querySelectorAll("[aria-label='Saved texts'] li").length === 2, null, { timeout: 15000 }).then(() => true, () => false));
 
-  // Copy and download on the computer.
+  // The AI's back photos are kept with their texts (V28), for reporting from the computer.
+  const readings = () => sql("SELECT text_id, photo_key, reply FROM saved_text_readings ORDER BY read_at");
+  const textIds = rows().map((r) => r.id);
+  check("each back photo the AI read is kept with its text, with the answer", readings().length === 2 && readings().every((r) => textIds.includes(r.text_id) && r.photo_key && /konekiväärikomppaniasta/.test(r.reply)), JSON.stringify(readings()));
+
+  // Front cover (V28): after the back text, a photo of the front goes to the computer.
+  const coverArea = page.getByRole("region", { name: "Front cover" });
+  check("phone: front cover button after the back text", await visible(coverArea.getByRole("button", { name: "Take a photo of the front cover" })));
+  await page.getByLabel("Front cover photo").setInputFiles({ name: "COVER.jpg", mimeType: "image/jpeg", buffer: await frontCover(page, "#7a1f1f") });
+  check("phone: says the front cover is saved", await visible(coverArea.getByText("✓ Front cover saved for the computer"), 15000));
+  const newest = rows().at(-1);
+  const withCover = () => sql("SELECT id, cover_key FROM saved_texts WHERE cover_key IS NOT NULL");
+  check("stored with the text it was taken for", withCover().length === 1 && withCover()[0].id === newest.id, JSON.stringify(withCover()));
+  const firstKey = withCover()[0]?.cover_key;
+  const pic = await pc.request.get(`/api/extract/texts/${newest.id}/cover`);
+  const size = jpegSize(await pic.body());
+  check("…made 1600 px on its long side, as a JPEG", pic.ok() && size && Math.max(size.width, size.height) === 1600, JSON.stringify(size));
+  check("…and only for the logged in", (await fetch(`${BASE_URL}/api/extract/texts/${newest.id}/cover`)).status === 401);
+  check("phone: no preview or retake button (the camera asks)", (await coverArea.getByRole("img").count()) === 0 && (await page.getByRole("button", { name: /Retake/ }).count()) === 0);
+  await page.getByLabel("Front cover photo").setInputFiles({ name: "COVER.jpg", mimeType: "image/jpeg", buffer: await frontCover(page, "#1f3a7a") });
+  await sleep(1500);
+  check("another photo replaces it", withCover().length === 1 && withCover()[0].cover_key !== firstKey, JSON.stringify(withCover()));
+
+  // On the computer: large, beside the text.
+  await list.getByRole("button").first().click();
+  const figure = pc.getByRole("figure", { name: "Front cover" });
+  check("computer: the front cover shows", await visible(figure.getByRole("img", { name: "Front cover" })));
+  await pc.waitForFunction(() => document.querySelector("figure img")?.naturalWidth > 0, null, { timeout: 10000 }).catch(() => {});
+  const placed = await pc.evaluate(() => {
+    const img = document.querySelector("figure img").getBoundingClientRect();
+    const text = document.querySelector("[aria-label='Selected text'] textarea").getBoundingClientRect();
+    return { beside: img.left >= text.right, tall: img.height, textTall: text.height, whole: document.querySelector("figure img").naturalWidth > 0 };
+  });
+  check("…beside the text, as tall as the text box, big enough to judge", placed.beside && placed.whole && placed.tall >= 300 && Math.abs(placed.tall - placed.textTall) < 4, JSON.stringify(placed));
+  check("…and a small one in the list", (await list.getByRole("button").first().locator("img").count()) === 1 && (await list.getByRole("button").last().locator("img").count()) === 0);
+  await figure.getByRole("button", { name: "Copy picture" }).click();
+  check("Copy picture puts the picture on the clipboard", await visible(figure.getByRole("button", { name: "Picture copied ✓" })) && (await pc.evaluate(async () => (await navigator.clipboard.read())[0].types)).includes("image/png"));
+  const picFile = pc.waitForEvent("download");
+  await figure.getByRole("link", { name: "Download picture" }).click();
+  const saved = await picFile;
+  check("Download picture: a .jpg named after the book", /^etukansi-vaino-linnan-romaani.*\.jpg$/.test(saved.suggestedFilename()), saved.suggestedFilename());
+  await figure.getByRole("img", { name: "Front cover" }).click();
+  const full = pc.getByRole("dialog", { name: "Front cover, full size" });
+  check("click: full size", await visible(full));
+  await pc.keyboard.press("Escape");
+  check("…Esc closes it", await full.waitFor({ state: "detached", timeout: 5000 }).then(() => true, () => false));
+  check("no Download .txt any more", (await pc.getByRole("button", { name: "Download .txt" }).count()) === 0);
+
+  // Reporting from the computer (V28): the back photo, the AI's answer and the text now go to the Photo log.
+  await pc.getByRole("button", { name: "Report a problem" }).click();
+  const pcReport = pc.getByRole("region", { name: "Report a problem" });
+  await pcReport.getByLabel(/What went wrong/).fill("viimeinen lause puuttuu");
+  await pcReport.getByRole("button", { name: "Send report" }).click();
+  check("computer: report sent", await visible(pcReport.getByText(/✓ Reported/), 15000));
+  const logged = sql("SELECT error, ocr_text, photo_key FROM photo_log WHERE screen = '/extract/saved'");
+  check("…in the Photo log with the back photo, the note, the answer and the text now", logged.length === 1 && logged[0].photo_key && /viimeinen lause puuttuu/.test(logged[0].error) && /— What came back —\nVäinö Linnan/.test(logged[0].ocr_text) && /— The text now —/.test(logged[0].ocr_text) && /Stopped because: stop/.test(logged[0].ocr_text), JSON.stringify(logged).slice(0, 400));
+  const logView = await pcCtx.newPage();
+  await logView.goto("/photo-log");
+  check("…shown there as reported on the computer, with the photo", await visible(logView.getByRole("listitem").filter({ hasText: "Extract: reported on the computer" }).getByRole("img", { name: "Photo" })));
+  await logView.close();
+
+  // Copy on the computer (kept).
   const first = list.getByRole("button").last(); // the older one (the corrected text)
   await first.click();
-  await pc.getByRole("button", { name: "Copy" }).click();
+  await pc.getByRole("button", { name: "Copy", exact: true }).click();
   check("Copy copies the selected text", (await pc.evaluate(() => navigator.clipboard.readText())).includes("kaksi miljoonaa"));
-  const download = pc.waitForEvent("download");
-  await pc.getByRole("button", { name: "Download .txt" }).click();
-  const file = await download;
-  check("Download gives a .txt named after the first words", /^vaino-linnan-romaani-kertoo-.*\.txt$/.test(file.suggestedFilename()), file.suggestedFilename());
-  const content = require("fs").readFileSync(await file.path(), "utf8");
-  check("…holding the text", content.includes("kaksi miljoonaa") && content.includes("Väinö"));
 
   // Correcting on the computer.
   const editBox = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
@@ -107,7 +185,7 @@ const t = suite();
   check("…stored, marked as corrected on the computer", corrected && sql(`SELECT edited_on_computer_at FROM saved_texts WHERE id = '${corrected.id}'`)[0].edited_on_computer_at, JSON.stringify(rows()));
   await pc.waitForTimeout(6000); // a refresh or two
   check("…and the refresh doesn't undo it", (await editBox.inputValue()).includes("rakastettu"));
-  await pc.getByRole("button", { name: "Copy" }).click();
+  await pc.getByRole("button", { name: "Copy", exact: true }).click();
   check("Copy copies the corrected text", (await pc.evaluate(() => navigator.clipboard.readText())).includes("rakastettu"));
   await editBox.fill("   ");
   check("emptying it is refused (Delete is for that)", await visible(pc.getByRole("status", { name: "Correction" }).getByText(/can't be empty/), 10000));
@@ -142,6 +220,7 @@ const t = suite();
   await pc.getByRole("button", { name: "Delete" }).click();
   await sleep(1000);
   check("Delete removes it", rows().length === 1 && (await list.getByRole("button").count()) === 1);
+  check("…with its kept back photo", readings().length === 1 && readings()[0].text_id === rows()[0].id, JSON.stringify(readings()));
 
   // Big screen: list and text side by side.
   await list.getByRole("button").first().click();
@@ -166,8 +245,7 @@ const t = suite();
 
   // No signal: waits on the phone, goes up later.
   await page.goto("/extract");
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
   await take(["third"]);
   await page.waitForFunction(() => /Väinö/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 });
   await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/Saved —/), 15000);
@@ -176,11 +254,17 @@ const t = suite();
   await box.fill((await box.inputValue()) + "\n\nLisätty ilman signaalia.");
   check("no signal: says it'll save later", await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/No signal — it'll be saved/), 15000));
   check("…not on the server yet", !rows().some((r) => r.text.includes("ilman signaalia")));
+  const coversBefore = withCover().length;
+  await page.getByLabel("Front cover photo").setInputFiles({ name: "COVER.jpg", mimeType: "image/jpeg", buffer: await frontCover(page, "#2f6a2f") });
+  check("no signal: the front cover waits too, and says so", await visible(coverArea.getByText(/No signal — the front cover will be saved by itself/), 15000));
   await page.context().setOffline(false);
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   let synced = false;
   for (let i = 0; i < 20 && !synced; i++) { await sleep(500); synced = rows().some((r) => r.text.includes("ilman signaalia")); }
   check("back online: saved by itself", synced && rows().length === before);
+  let coverUp = false;
+  for (let i = 0; i < 20 && !coverUp; i++) { await sleep(500); coverUp = withCover().length === coversBefore + 1; }
+  check("…and the front cover goes up after it", coverUp, JSON.stringify(withCover()));
   check("computer: shows it", await visible(pc.locator("[aria-label='Saved texts']").getByRole("button", { name: /Väinö/ }).first(), 15000));
 
   // Kept 7 days after the last change (V27): one changed 8 days ago goes, 6 days ago stays.

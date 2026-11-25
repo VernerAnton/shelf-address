@@ -587,3 +587,45 @@ part-way, with no sign anything was wrong.
   reported problem", with the note, the photo, why the AI stopped, the
   tokens used and the reply. Reports use the existing table (outcome
   `error`, screen `/extract`): no database change.
+
+## 28. Extract reworked: red Report, Start over to the camera, front cover to the computer.
+
+**Adds to:** §22–§27. Asked for by the shop owner after using it daily.
+
+**Phone (Extract):**
+- **Share and Copy are gone** (Saved texts does that job), with the OneDrive
+  line under them. In their place a **big red "Report a problem"** button
+  (the §27 report: last photo, what came back, the text now, optional note).
+- **Start over** asks nothing and opens the camera straight away for the next
+  book. Nothing is lost: the text is in Saved texts (logged-in phones) and
+  on the phone itself (below).
+- **"Take a photo of the front cover"** appears once the back text is read
+  (logged-in phones only: it's for the computer). Made 1600 px on its long
+  side and sent with that text; without signal it waits, after the text. A
+  line confirms "✓ Front cover saved for the computer". No preview or retake
+  button — the phone's camera already offers a retake; taking it again
+  replaces it.
+- **Earlier texts on this phone:** every text the phone read is kept on the
+  phone for 7 days (kv `extract:history`), so Start over never loses one —
+  also on a phone that isn't logged in. Tap one to open it again.
+
+**Computer (Saved texts):**
+- The front cover shows **large beside the text**, as tall as the text box,
+  the whole picture (not cropped); click for full size (Esc closes).
+  **Copy picture** (as PNG, to paste with Ctrl+V into a listing) and
+  **Download picture** under it; the picture can also be dragged. A small
+  one in the list tells the books apart.
+- **Copy** (the text) stays; **Download .txt is gone**.
+- **Report a problem** (red), as on the phone.
+
+**Server:**
+- The AI reading takes the text's id (`X-Text-Id`) and keeps the back-cover
+  photo and the AI's exact answer with it (`saved_text_readings`, R2
+  `saved-texts/<id>/`), so reports from the computer have the photo. Readings
+  whose text never arrived go after a day.
+- Front cover: `PUT/GET /api/extract/texts/<id>/cover`, R2
+  `saved-texts/<id>/cover-<time>.jpg`, `saved_texts.cover_key/cover_at`.
+- Report from the computer: `POST /api/extract/texts/<id>/report {note}` —
+  one Photo log entry per back photo (screen `/extract/saved`).
+- Photos and readings are deleted with their text (7 days, or Delete).
+- Migration 0012.

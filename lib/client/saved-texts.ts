@@ -63,4 +63,56 @@ export function syncTexts(): Promise<SyncResult> {
   return syncing;
 }
 
-if (typeof window !== "undefined") window.addEventListener("online", () => void syncTexts());
+/**
+ * Front covers (§28) waiting to go up, one per text (a newer photo replaces a
+ * waiting one). They go after the texts, as the server needs the text first.
+ */
+const COVERS = "extract:covers";
+type OutgoingCover = { id: string; photo: Blob; takenAt: string };
+export type CoverResult = "saved" | "waiting" | "loggedout";
+
+export async function queueCover(id: string, photo: Blob) {
+  const box = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+  box[id] = { id, photo, takenAt: new Date().toISOString() };
+  await kvSet(COVERS, box);
+}
+
+let sendingCovers: Promise<CoverResult> | null = null;
+
+/** Sends the waiting front covers (after any waiting texts). */
+export function syncCovers(): Promise<CoverResult> {
+  sendingCovers ??= (async (): Promise<CoverResult> => {
+    const texts = await syncTexts();
+    if (texts === "loggedout") return "loggedout";
+    for (;;) {
+      const box = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+      const entry = Object.values(box)[0];
+      if (!entry) return "saved";
+      let response: Response;
+      try {
+        response = await fetch(`/api/extract/texts/${entry.id}/cover`, {
+          method: "PUT",
+          headers: { "content-type": entry.photo.type || "image/jpeg" },
+          body: entry.photo,
+        });
+      } catch {
+        return "waiting";
+      }
+      if (response.status === 401) return "loggedout";
+      if (response.status >= 500) return "waiting";
+      // The text isn't up yet (it's still waiting itself): keep the cover for later.
+      if (response.status === 404 && ((await kvGet<Record<string, OutgoingText>>(OUTBOX)) ?? {})[entry.id]) return "waiting";
+      // Saved, or refused for good (the text was deleted on the computer, say).
+      const now = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+      if (now[entry.id]?.takenAt === entry.takenAt) {
+        delete now[entry.id];
+        await kvSet(COVERS, now);
+      }
+    }
+  })().finally(() => {
+    sendingCovers = null;
+  });
+  return sendingCovers;
+}
+
+if (typeof window !== "undefined") window.addEventListener("online", () => void syncCovers());

@@ -82,6 +82,9 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
   const [saving, setSaving] = useState(0);
   const [saved, setSaved] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  // Turns one after another, each from the newest picture: quick taps must all count (V33.3).
+  const turns = useRef<Promise<void>>(Promise.resolve());
+  const newest = useRef<{ id: string; blob: Blob } | null>(null);
 
   const mine = local?.id === text.id ? local : null;
   const src = mine?.url ?? coverUrl(text);
@@ -94,9 +97,9 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
     };
   }, [local?.url]);
 
-  /** The picture as it is now: the newest made here, or the server's. */
+  /** The picture as it is now: the newest made here (even if not on screen yet), or the server's. */
   const current = async (): Promise<Blob> => {
-    if (mine) return mine.blob;
+    if (newest.current?.id === text.id) return newest.current.blob;
     const response = await fetch(coverUrl(text));
     if (!response.ok) throw new Error("The picture couldn't be loaded.");
     return response.blob();
@@ -105,6 +108,7 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
   /** Shows `picture` at once and saves it in the background, after any save still under way. */
   const apply = (picture: Blob, before: Blob | null) => {
     const id = text.id;
+    newest.current = { id, blob: picture };
     setLocal({ id, blob: picture, url: URL.createObjectURL(picture) });
     setUndo(before ? { id, blob: before } : null);
     setError(null);
@@ -125,6 +129,7 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
         setTimeout(() => setSaved(false), 2500);
       } catch (e) {
         // Not saved: go back to what the server has, and say so.
+        if (newest.current?.blob === picture) newest.current = null;
         setLocal((l) => (l?.blob === picture ? null : l));
         setError(`${(e as Error).message} The change wasn't kept — try again.`);
       } finally {
@@ -133,13 +138,15 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
     });
   };
 
-  const turn = async (direction: 1 | -1) => {
-    try {
-      const before = await current();
-      apply(await turned(before, direction), before);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const turn = (direction: 1 | -1) => {
+    turns.current = turns.current.then(async () => {
+      try {
+        const before = await current();
+        apply(await turned(before, direction), before);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    });
   };
 
   const openEditor = async () => {
@@ -193,10 +200,10 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
           </a>
         </div>
         <div role="group" aria-label="Edit the picture" className="grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => void turn(-1)} aria-label="Rotate left" title="Turn a quarter to the left" className={`${button} border border-line bg-surface text-xl`}>
+          <button type="button" onClick={() => turn(-1)} aria-label="Rotate left" title="Turn a quarter to the left" className={`${button} border border-line bg-surface text-xl`}>
             ↺
           </button>
-          <button type="button" onClick={() => void turn(1)} aria-label="Rotate right" title="Turn a quarter to the right" className={`${button} border border-line bg-surface text-xl`}>
+          <button type="button" onClick={() => turn(1)} aria-label="Rotate right" title="Turn a quarter to the right" className={`${button} border border-line bg-surface text-xl`}>
             ↻
           </button>
           <button

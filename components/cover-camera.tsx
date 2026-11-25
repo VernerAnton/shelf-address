@@ -64,7 +64,18 @@ function smooth(previous: Corners | null, next: Corners): Corners {
  * A box of exactly `aspect`, as large as fits in the space available, so
  * overlays drawn in fractions of it line up with the picture inside.
  */
-export function FitBox({ aspect, className = "", children }: { aspect: number; className?: string; children: ReactNode }) {
+export function FitBox({
+  aspect,
+  className = "",
+  overflow = "hidden",
+  children,
+}: {
+  aspect: number;
+  className?: string;
+  /** "visible" lets corner handles at the picture's very edge show whole, past it. */
+  overflow?: "hidden" | "visible";
+  children: ReactNode;
+}) {
   const outer = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState<{ width: number; height: number } | null>(null);
   useEffect(() => {
@@ -80,7 +91,7 @@ export function FitBox({ aspect, className = "", children }: { aspect: number; c
     return () => observer.disconnect();
   }, [aspect]);
   return (
-    <div ref={outer} className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
+    <div ref={outer} className={`flex min-h-0 w-full flex-1 items-center justify-center ${overflow === "visible" ? "overflow-visible" : "overflow-hidden"}`}>
       <div className={`relative ${className}`} style={size ?? { width: 0, height: 0 }}>
         {children}
       </div>
@@ -392,8 +403,9 @@ export function CornerEditor({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col p-4">
-        <FitBox aspect={photo.width / photo.height} className="touch-none select-none">
+      {/* Room around the picture for corner handles on its edge (they're 44 px across). */}
+      <div className="flex min-h-0 flex-1 flex-col p-7">
+        <FitBox aspect={photo.width / photo.height} overflow="visible" className="touch-none select-none">
           <div ref={boxRef} className="absolute inset-0" />
           {/* eslint-disable-next-line @next/next/no-img-element -- a local photo, not a page asset */}
           <img src={url} alt="The photo taken" className="size-full" draggable={false} />
@@ -438,8 +450,13 @@ export function CornerEditor({
               style={{
                 width: LOUPE,
                 height: LOUPE,
-                left: `calc(${corners[dragging][0] * 100}% - ${LOUPE / 2}px)`,
-                top: `calc(${corners[dragging][1] * 100}% - ${LOUPE + 40}px)`,
+                // Above the finger; below it when there's no room above (the top corners), and kept
+                // inside the picture sideways, so it's never cut off at the edge.
+                left: Math.min(Math.max(0, corners[dragging][0] * box.width - LOUPE / 2), Math.max(0, box.width - LOUPE)),
+                top:
+                  corners[dragging][1] * box.height - LOUPE - 40 >= 0
+                    ? corners[dragging][1] * box.height - LOUPE - 40
+                    : Math.min(corners[dragging][1] * box.height + 40, Math.max(0, box.height - LOUPE)),
                 backgroundImage: `url(${url})`,
                 backgroundRepeat: "no-repeat",
                 backgroundSize: `${box.width * ZOOM}px ${box.height * ZOOM}px`,

@@ -223,17 +223,25 @@ const t = suite();
   await visible(editor.getByRole("button", { name: "Top-left corner" }));
   await sleep(1500); // let the edge-finding finish
   await inside.getByRole("button", { name: "Whole picture" }).click();
+  // Crop to the middle: every corner dragged 20% in (one corner alone only tilts the shape,
+  // and straightening that keeps the longest edges' full size).
   const frame = await editorImg.boundingBox();
-  const handle = editor.getByRole("button", { name: "Top-left corner" });
-  const hb = await handle.boundingBox();
-  await pc.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
-  await pc.mouse.down();
-  await pc.mouse.move(frame.x + frame.width * 0.35, frame.y + frame.height * 0.35, { steps: 8 });
-  await pc.mouse.up();
+  for (const [name, fx, fy] of [["Top-left", 0.2, 0.2], ["Top-right", 0.8, 0.2], ["Bottom-right", 0.8, 0.8], ["Bottom-left", 0.2, 0.8]]) {
+    const hb = await editor.getByRole("button", { name: `${name} corner` }).boundingBox();
+    await pc.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await pc.mouse.down();
+    await pc.mouse.move(frame.x + frame.width * fx, frame.y + frame.height * fy, { steps: 8 });
+    if (name === "Top-left") {
+      // V33.3: near the top the magnifier goes below the finger, inside the picture — not off its top.
+      const loupe = await editor.locator("[aria-hidden][style*='background-image']").boundingBox();
+      check("magnifier on a top corner: below the finger, inside the picture", loupe && loupe.y >= frame.y - 1 && loupe.y > frame.y + frame.height * fy && loupe.x >= frame.x - 1, JSON.stringify({ loupe, frame }));
+    }
+    await pc.mouse.up();
+  }
   await editor.getByRole("button", { name: "Save picture" }).click();
   check("Save picture: the editor closes", await editor.waitFor({ state: "detached", timeout: 15000 }).then(() => true, () => false));
-  const cropped = await waitForSize((z) => z && z.width < tall.width * 0.85);
-  check("…and the picture is cropped to the corners", cropped && cropped.width < tall.width * 0.85 && cropped.height < tall.height * 0.85 && cropped.width > tall.width * 0.4, JSON.stringify([tall, cropped]));
+  const cropped = await waitForSize((z) => z && z.width < tall.width * 0.8);
+  check("…and the picture is cropped to the corners (about 60% each way)", cropped && Math.abs(cropped.width / tall.width - 0.6) < 0.06 && Math.abs(cropped.height / tall.height - 0.6) < 0.06, JSON.stringify([tall, cropped]));
   await tools.getByRole("button", { name: "Undo last change" }).click();
   const undone = await waitForSize((z) => z && z.width === tall.width);
   check("Undo last change: the whole picture is back", undone && undone.width === tall.width && undone.height === tall.height, JSON.stringify(undone));

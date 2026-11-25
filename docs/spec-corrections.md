@@ -863,3 +863,10 @@ migrations are applied and don't touch the same tables.
 - **Undo last change** puts back the picture as it was before the last turn
   or edit (one step). Copy picture, Download picture and the full-size view
   show the newest picture at once.
+- **V33.3:** the corner magnifier goes below the finger when there's no room
+  above it (the top corners), and stays inside the picture sideways — in
+  Sections' cover camera too, as it's the same editor. Corner handles on the
+  picture's very edge show whole (the editor leaves room around the picture),
+  so they're easy to grab. Quick taps on ↺ / ↻ all count now: each turn waits
+  for the one before and starts from the newest picture (before, two quick
+  taps could both start from the same picture, losing a turn).

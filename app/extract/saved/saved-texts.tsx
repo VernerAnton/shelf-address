@@ -41,7 +41,8 @@ export function SavedTexts() {
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [zoom, setZoom] = useState(false);
+  // The picture shown full size (its address: the server's, or a just-edited one), or null.
+  const [zoom, setZoom] = useState<string | null>(null);
   const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const pending = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
@@ -64,7 +65,7 @@ export function SavedTexts() {
   // The full-size picture closes with Esc.
   useEffect(() => {
     if (!zoom) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoom(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoom(null);
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [zoom]);
@@ -135,7 +136,7 @@ export function SavedTexts() {
     flush();
     setDraft(null);
     setReport(null);
-    setZoom(false);
+    setZoom(null);
     setSelected(id);
   };
 
@@ -325,7 +326,7 @@ export function SavedTexts() {
                   </div>
                 </div>
 
-                {text.coverAt && <CoverPanel text={text} button={button} onZoom={() => setZoom(true)} onChanged={load} />}
+                {text.coverAt && <CoverPanel text={text} button={button} onZoom={setZoom} onChanged={load} />}
               </div>
 
               {report?.id === text.id && (
@@ -376,11 +377,11 @@ export function SavedTexts() {
             <div
               role="dialog"
               aria-label="Front cover, full size"
-              onClick={() => setZoom(false)}
+              onClick={() => setZoom(null)}
               className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/85 p-4"
             >
               {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login */}
-              <img src={coverUrl(text)} alt="Front cover, full size" className="max-h-full max-w-full object-contain" />
+              <img src={zoom} alt="Front cover, full size" className="max-h-full max-w-full object-contain" />
             </div>
           )}
         </div>

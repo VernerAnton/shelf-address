@@ -316,7 +316,7 @@ export function SavedTexts() {
                       : "You can correct the text right here — it saves by itself."}
                   </p>
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
-                    <button type="button" onClick={() => void copy(text)} className={`${button} bg-accent text-accent-contrast`}>
+                    <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
                       {copied ? "Copied ✓" : "Copy"}
                     </button>
                     <button
@@ -333,9 +333,15 @@ export function SavedTexts() {
                       <button
                         type="button"
                         onClick={() => setReport({ id: text.id, note: "", status: "open" })}
-                        className={`${button} bg-danger text-background`}
+                        aria-label="Report a problem"
+                        className={`${button} whitespace-normal bg-danger text-center leading-tight text-background`}
                       >
-                        Report a problem
+                        {/* On two lines, so it fits beside the others on one row (V31). */}
+                        <span>
+                          Report a
+                          <br />
+                          problem
+                        </span>
                       </button>
                     )}
                   </div>
@@ -348,10 +354,14 @@ export function SavedTexts() {
                       <img
                         src={coverUrl(text)}
                         alt="Front cover"
-                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-28.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[calc(100dvh-23rem)] xl:max-w-[40rem] 2xl:h-[calc(100dvh-19.5rem)]"
+                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-28.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_23rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_19.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]"
                       />
                     </button>
-                    {/* On a wide screen the buttons sit beside the picture, so it can be as tall as the whole text column. */}
+                    {/*
+                      On a wide screen the buttons sit beside the picture, so it can be as tall as the whole text
+                      column. Its size is also held to the width the text column can spare: the text's buttons need
+                      ~30rem to stay on one row, and the list, gaps and these buttons take 66rem of the page.
+                    */}
                     <div className="grid w-full grid-cols-2 gap-2 md:flex xl:w-auto xl:flex-col">
                       <button type="button" onClick={() => void copyPicture(text)} className={`${button} bg-accent text-accent-contrast`}>
                         {pictureCopied ? "Picture copied ✓" : "Copy picture"}

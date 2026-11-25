@@ -639,3 +639,14 @@ part-way, with no sign anything was wrong.
   taken — it goes to the computer with the text.") and goes up as soon as the
   text is saved. A cover whose text never arrives (the reading failed, then
   Start over) is let go after an hour and never holds up the others.
+- **V31:** an AI answer lost on its way back no longer leaves the phone on
+  "Reading the text…" for good. It happened in the shop: the front cover was
+  taken while the AI read (V30), the browser put the page to sleep with the
+  camera open, and the reply (ready on the server in 23 s) never reached it.
+  Each reading now has an id the phone gives it (`X-Reading-Id`); the server
+  keeps the answer under it, and after 5 s — every 3 s after that, and on
+  coming back to the app — the phone also asks `GET /api/extract/readings/<id>`.
+  Whichever answer comes first is used; after 90 s it gives up as before.
+  On the computer, Report a problem is on two lines and Copy keeps its width
+  when it says "Copied ✓", so the buttons stay on one row; on a wide but not
+  very wide screen the cover is held to what the text column can spare.

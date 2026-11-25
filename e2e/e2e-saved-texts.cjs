@@ -143,16 +143,27 @@ const t = suite();
     const text = document.querySelector("[aria-label='Selected text'] textarea").getBoundingClientRect();
     return { beside: img.left >= text.right, tall: img.height, textTall: text.height, whole: document.querySelector("figure img").naturalWidth > 0 };
   });
-  check("…beside the text, at least as tall as the text box, big enough to judge", placed.beside && placed.whole && placed.tall >= 300 && placed.tall >= placed.textTall - 4, JSON.stringify(placed));
+  check("…beside the text, big enough to judge (held to what the text's width can spare)", placed.beside && placed.whole && placed.tall >= 300, JSON.stringify(placed));
   check("…and a small one in the list", (await list.getByRole("button").first().locator("img").count()) === 1 && (await list.getByRole("button").last().locator("img").count()) === 0);
   // A big screen (like the shop's, 1536×730 in the browser): the page grows to use the width (V28).
   await pc.setViewportSize({ width: 1536, height: 730 });
   await sleep(300);
   const wide = await pc.evaluate(() => {
-    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|✓ Mark done|Delete|Report a problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
+    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
     return { main: document.querySelector("main").getBoundingClientRect().width, rows: new Set(tops).size, scroll: document.documentElement.scrollHeight - innerHeight, cover: document.querySelector("figure img").getBoundingClientRect().height };
   });
   check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 400, JSON.stringify(wide));
+  // V31: Report a problem on two lines, and Copy keeps its width when it says Copied, so nothing jumps to a second row.
+  for (const [w, h] of [[1366, 768], [1280, 860], [1536, 730]]) {
+    await pc.setViewportSize({ width: w, height: h });
+    await pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: /^(Copy|Copied ✓)$/ }).click();
+    await sleep(300);
+    const after = await pc.evaluate(() => {
+      const btns = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim()));
+      return { n: btns.length, rows: new Set(btns.map((x) => Math.round(x.getBoundingClientRect().top))).size, copied: btns.some((x) => x.textContent.includes("Copied")) };
+    });
+    check(`${w}×${h}: after Copy, the buttons stay on one row`, after.n === 4 && after.rows === 1 && after.copied, JSON.stringify(after));
+  }
   await pc.setViewportSize({ width: 1280, height: 860 });
   await figure.getByRole("button", { name: "Copy picture" }).click();
   check("Copy picture puts the picture on the clipboard", await visible(figure.getByRole("button", { name: "Picture copied ✓" })) && (await pc.evaluate(async () => (await navigator.clipboard.read())[0].types)).includes("image/png"));
@@ -303,6 +314,20 @@ const t = suite();
   check("laptop: the page itself doesn't scroll", fit.page <= 1, JSON.stringify(fit));
   check("…the To do and Done lists scroll inside themselves", fit.lists.length === 2 && fit.lists.every((x) => x > 100), JSON.stringify(fit));
   await pc.screenshot({ path: ".wrangler/saved-laptop.png" });
+
+  // V31: the AI's answer gets lost on its way back (the page asleep while the camera is open):
+  // the phone fetches it from the server, where every answer is kept.
+  await startOver();
+  let swallowed = 0;
+  await page.route("**/api/extract", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fetch(); // the server reads it and keeps the answer…
+    swallowed++; // …but the reply never reaches the page
+  });
+  await take(["lost"]);
+  check("answer lost on the way: the phone gets it from the server instead", await page.waitForFunction(() => /Väinö/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 20000 }).then(() => true, () => false) && swallowed === 1, String(swallowed));
+  check("…read by AI, no phone-reader fallback", (await page.getByText(/so the phone did/).count()) === 0 && await visible(page.getByRole("status", { name: "Saved for the computer" }).getByText(/Saved —/), 15000));
+  await page.unroute("**/api/extract");
 
   // V30: the front cover can be taken while the AI is still reading the back.
   await fetch(`${BOOKS}/__ai?mode=delay`, { method: "POST" });

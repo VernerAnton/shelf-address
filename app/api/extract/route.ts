@@ -9,7 +9,8 @@ import { addReading } from "@/lib/saved-texts";
  * phone instead). An image content type can't be sent cross-site without a
  * CORS preflight, which this never grants; the login cookie is SameSite=Strict.
  * With an `X-Text-Id` header, the photo and the answer are kept with that
- * saved text (§28).
+ * saved text (§28); with `X-Reading-Id` too, under that id, so the phone can
+ * fetch the answer again if it got lost (GET /api/extract/readings/<id>).
  */
 export async function POST(request: Request) {
   try {
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
     // Kept with the saved text it's for, so the reading can be reported from the computer (§28).
     const textId = request.headers.get("x-text-id");
     if (textId && /^[\w-]{8,64}$/.test(textId)) {
-      await addReading(textId, photo, type, text, details).catch((e) => console.error("keeping the reading", e));
+      await addReading(textId, photo, type, text, details, request.headers.get("x-reading-id")).catch((e) => console.error("keeping the reading", e));
     }
     return Response.json({ text, details }, { headers: NO_STORE });
   } catch (error) {

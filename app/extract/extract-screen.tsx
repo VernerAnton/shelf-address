@@ -141,17 +141,92 @@ class AiUnavailable extends Error {
   }
 }
 
-async function readWithAi(jpeg: Blob, textId: string): Promise<{ text: string; details: AiDetails | null }> {
-  let response: Response;
+type AiAnswer = { text: string; details: AiDetails | null };
+
+/** Longest the phone waits for the AI (the server itself gives up at 60 s). */
+const AI_WAIT_MS = 90_000;
+/** After this long, the phone also asks the server whether the answer is there already. */
+const RECOVER_AFTER_MS = 5_000;
+const RECOVER_EVERY_MS = 3_000;
+
+/** The answer for a reading, if the server has it (it keeps every one: §28). */
+async function fetchReading(readingId: string): Promise<AiAnswer | null> {
   try {
-    // The text's id: the server keeps the photo and answer with it, for reports from the computer (§28).
-    response = await fetch("/api/extract", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg", "x-text-id": textId } });
+    const response = await fetch(`/api/extract/readings/${readingId}`, { cache: "no-store" });
+    if (!response.ok) return null;
+    const body = (await response.json()) as AiAnswer;
+    return typeof body.text === "string" ? { text: body.text, details: body.details ?? null } : null;
   } catch {
-    throw new AiUnavailable("no signal");
+    return null;
   }
-  const body = (await response.json().catch(() => null)) as { text?: string; details?: AiDetails; error?: string; kind?: string } | null;
-  if (response.ok && typeof body?.text === "string") return { text: body.text, details: body.details ?? null };
-  throw new AiUnavailable(body?.error ?? `error ${response.status}`, body?.kind === "login");
+}
+
+/**
+ * Reads the photo with the AI. The answer can get lost on its way back: a
+ * phone puts the page to sleep while the camera is open (a front cover taken
+ * during the reading, V30), and the reply arriving meanwhile may be dropped,
+ * leaving "Reading the text…" for good. So each reading has an id the server
+ * keeps its answer under, and after a few seconds — and on coming back to the
+ * app — the phone also asks for it there (V31). Whichever comes first wins.
+ */
+async function readWithAi(jpeg: Blob, textId: string): Promise<AiAnswer> {
+  const readingId = crypto.randomUUID();
+  const controller = new AbortController();
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  let done = false;
+  let onVisible = () => {};
+  const sent = (async (): Promise<AiAnswer> => {
+    let response: Response;
+    try {
+      // The text's id: the server keeps the photo and answer with it, for reports from the computer (§28).
+      response = await fetch("/api/extract", {
+        method: "POST",
+        body: jpeg,
+        headers: { "content-type": "image/jpeg", "x-text-id": textId, "x-reading-id": readingId },
+        signal: controller.signal,
+      });
+    } catch {
+      // Cut off: perhaps the answer is on the server all the same.
+      await new Promise((r) => setTimeout(r, 1000));
+      const kept = await fetchReading(readingId);
+      if (kept) return kept;
+      throw new AiUnavailable("no signal");
+    }
+    const body = (await response.json().catch(() => null)) as { text?: string; details?: AiDetails; error?: string; kind?: string } | null;
+    if (response.ok && typeof body?.text === "string") return { text: body.text, details: body.details ?? null };
+    throw new AiUnavailable(body?.error ?? `error ${response.status}`, body?.kind === "login");
+  })();
+  const recovered = new Promise<AiAnswer>((resolve) => {
+    let asking = false;
+    const ask = async () => {
+      if (asking) return;
+      asking = true;
+      const kept = await fetchReading(readingId);
+      asking = false;
+      if (kept) resolve(kept);
+    };
+    onVisible = () => {
+      if (document.visibilityState === "visible") void ask();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const again = () => {
+      if (done) return;
+      void ask();
+      timers.push(setTimeout(again, RECOVER_EVERY_MS));
+    };
+    timers.push(setTimeout(again, RECOVER_AFTER_MS));
+  });
+  const tooLong = new Promise<never>((_, reject) => {
+    timers.push(setTimeout(() => reject(new AiUnavailable("the AI's answer never arrived")), AI_WAIT_MS));
+  });
+  try {
+    return await Promise.race([sent, recovered, tooLong]);
+  } finally {
+    done = true;
+    timers.forEach(clearTimeout);
+    document.removeEventListener("visibilitychange", onVisible);
+    controller.abort();
+  }
 }
 
 /**

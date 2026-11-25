@@ -220,15 +220,44 @@ export async function getCover(id: string): Promise<R2ObjectBody | null> {
  * the reading itself, so the text may not be on the server yet; one that
  * never arrives is cleared a day later.
  */
-export async function addReading(textId: string, photo: ArrayBuffer, type: string, reply: string, details: AiDetails): Promise<void> {
+export async function addReading(
+  textId: string,
+  photo: ArrayBuffer,
+  type: string,
+  reply: string,
+  details: AiDetails,
+  readingId?: string | null,
+): Promise<void> {
   validId(textId);
-  const id = crypto.randomUUID();
+  // The phone names the reading (V31), so it can ask for the answer again if it never arrived.
+  const id = readingId && /^[\w-]{8,64}$/.test(readingId) ? readingId : crypto.randomUUID();
   const key = `saved-texts/${textId}/reading-${id}.${IMAGE_TYPES[type] ?? "jpg"}`;
   await (await getBucket()).put(key, photo, { httpMetadata: { contentType: type } });
   await (await getDb())
-    .prepare("INSERT INTO saved_text_readings (id, text_id, read_at, photo_key, reply, details) VALUES (?, ?, ?, ?, ?, ?)")
+    .prepare("INSERT OR IGNORE INTO saved_text_readings (id, text_id, read_at, photo_key, reply, details) VALUES (?, ?, ?, ?, ?, ?)")
     .bind(id, textId, new Date().toISOString(), key, reply, JSON.stringify(details))
     .run();
+}
+
+/**
+ * A reading's answer, by the id the phone gave it (V31): for a phone whose
+ * answer got lost (the browser put the page to sleep while the camera was
+ * open for the front cover, say). Null if there's no such reading (yet).
+ */
+export async function getReading(id: string): Promise<{ text: string; details: AiDetails | null } | null> {
+  validId(id);
+  const row = await (await getDb())
+    .prepare("SELECT reply, details FROM saved_text_readings WHERE id = ?")
+    .bind(id)
+    .first<{ reply: string; details: string | null }>();
+  if (!row) return null;
+  let details: AiDetails | null = null;
+  try {
+    details = row.details ? (JSON.parse(row.details) as AiDetails) : null;
+  } catch {
+    // leave out
+  }
+  return { text: row.reply, details };
 }
 
 type ReadingRow = { id: string; read_at: string; photo_key: string | null; reply: string; details: string | null };

@@ -33,9 +33,10 @@ everything outside the pushed repository — scratch folders included. Test
 suites and their fixtures once lived in a scratch folder and were lost that
 way. So:
 
-- **Tests live in `e2e/`** (see `e2e/README.md`). The full run
-  (`bash e2e/run.sh`) takes about half an hour — the text-reading suites are
-  slow. New features get a suite or checks
+- **Tests live in `e2e/`** (see `e2e/README.md`). The full run is
+  `node e2e/run-fast.cjs` — 3 suites at a time, each on its own server, about
+  5 minutes (`bash e2e/run.sh` runs them one by one: over 30 minutes). Name
+  suites to run just those. New features get a suite or checks
   there, committed with the feature. Never keep tests, fixtures or helper
   scripts only in a scratch folder.
 - **Database backups go to R2**: `bash scripts/backup-db.sh` before every

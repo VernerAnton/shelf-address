@@ -1,4 +1,4 @@
--- BookOps (docs/spec-corrections.md §27): books photographed at the desk
+-- BookOps (docs/spec-corrections.md §30): books photographed at the desk
 -- (front and back cover), filled in from the book databases and by the AI,
 -- priced by hand, then sent to the web store.
 --

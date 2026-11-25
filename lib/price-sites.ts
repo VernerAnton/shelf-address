@@ -1,7 +1,7 @@
 import { antikvaariSearchUrl } from "@/lib/antikvaari";
 
 /**
- * BookOps' price check (docs/spec-corrections.md §27): one button per site,
+ * BookOps' price check (docs/spec-corrections.md §30): one button per site,
  * each opening that site's own search with the book already filled in — the
  * ISBN, or the title and author for a book without one. Only plain links:
  * nothing is fetched or shown inside the app, and no price is suggested. The

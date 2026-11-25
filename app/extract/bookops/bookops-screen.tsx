@@ -18,8 +18,9 @@ import { STORE_IS_STAND_IN } from "@/lib/bookops-store";
 import { bookOps, BookOpsApiError, readBarcode } from "@/lib/client/bookops";
 import { formatIsbn, parseIsbn } from "@/lib/isbn";
 import { PRICE_SITES, priceQuery } from "@/lib/price-sites";
+import { PhotoViewer } from "@/components/photo-viewer";
 import { LoginForm } from "../_components/login-form";
-import { BookOpsCamera, type Shots } from "./bookops-camera";
+import { BookOpsCamera, type CameraTarget, type Shots } from "./bookops-camera";
 
 /** How often the list checks for news while it's on screen: a book sent from a phone, a field filled in. */
 const REFRESH_MS = 3000;
@@ -27,6 +28,16 @@ const REFRESH_MS = 3000;
 const SAVE_AFTER_MS = 800;
 /** A book still waiting to be read is given another push this often (the server makes sure only one does the work). */
 const NUDGE_EVERY_MS = 20_000;
+
+/** The computer's own camera: off unless chosen (the phone takes the photos); remembered on this computer. */
+const WEBCAM_KEY = "bookops:webcam";
+function storedWebcam(): boolean {
+  try {
+    return localStorage.getItem(WEBCAM_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** The fields typed at the desk, as text. */
 type Field = "title" | "author" | "publisher" | "year" | "description" | "location" | "price" | "quantity" | "isbn";
@@ -63,7 +74,7 @@ function SourceTag({ source, typed, reading }: { source: FieldSource | null; typ
 }
 
 /**
- * BookOps on a computer (docs/spec-corrections.md §27): one screen. The queue
+ * BookOps on a computer (docs/spec-corrections.md §30): one screen. The queue
  * on the left, the book being worked on in the middle, the camera on the
  * right. A book is photographed front and back (here, or on a phone); the
  * ISBN comes from the barcode, title and author from the book databases, the
@@ -85,6 +96,19 @@ export function BookOpsScreen() {
   const [busy, setBusy] = useState<"send" | "back" | null>(null);
   const [isbn, setIsbn] = useState("");
   const [isbnNote, setIsbnNote] = useState<string | null>(null);
+  const [webcam, setWebcamState] = useState(false);
+  /** A photo shown large over the page. */
+  const [viewing, setViewing] = useState<{ src: string; caption: string } | null>(null);
+  const setWebcam = (on: boolean) => setWebcamState(on);
+  const chooseWebcam = (on: boolean) => {
+    setWebcamState(on);
+    try {
+      if (on) localStorage.setItem(WEBCAM_KEY, "1");
+      else localStorage.removeItem(WEBCAM_KEY);
+    } catch {
+      // Not remembered, that's all.
+    }
+  };
 
   const selectedRef = useRef<string | null>(null);
   const typedRef = useRef<Typed>({});
@@ -129,7 +153,10 @@ export function BookOpsScreen() {
   }, [nudge]);
 
   useEffect(() => {
-    const first = setTimeout(() => void load(), 0);
+    const first = setTimeout(() => {
+      setWebcam(storedWebcam());
+      void load();
+    }, 0);
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, REFRESH_MS);
@@ -205,26 +232,37 @@ export function BookOpsScreen() {
     return () => document.removeEventListener("visibilitychange", flush);
   }, [saveNow]);
 
-  /** Both covers photographed here: store the book, open it, and let the reading start. */
-  const onBook = useCallback(
-    async ({ front, back, backCanvas }: Shots) => {
-      const id = crypto.randomUUID();
+  /**
+   * The camera's pictures. For the open book (it lacked photos): added to it,
+   * and it's read again. Otherwise: a new book, opened, and the reading starts.
+   * The barcode in a back photo gives the ISBN.
+   */
+  const onShots = useCallback(
+    async ({ targetId, front, back, backCanvas }: Shots) => {
       setAdding((n) => n + 1);
       setNotice(null);
       try {
-        const barcode = await readBarcode(backCanvas);
-        const book = await bookOps.add({ id, front, back, isbn: barcode, isbnSource: "barcode" });
-        put(book);
-        open(book.id);
-        nudge(book.id);
-        setNotice(
-          barcode
-            ? { kind: "ok", text: `Added to the queue. ISBN ${formatIsbn(barcode)} read from the barcode.` }
-            : { kind: "warn", text: "Added to the queue. No barcode found in the back photo, so the AI is looking for the ISBN." },
-        );
+        const barcode = backCanvas ? await readBarcode(backCanvas) : null;
+        if (targetId) {
+          const book = await bookOps.attach(targetId, { front, back, isbn: barcode });
+          put(book);
+          nudge(book.id);
+          const name = book.title?.trim() || "the book";
+          setNotice({ kind: "ok", text: `Photos added to ${name}. The AI is reading them.` });
+        } else {
+          const { book } = await bookOps.add({ id: crypto.randomUUID(), front, back, isbn: barcode, isbnSource: "barcode" });
+          put(book);
+          open(book.id);
+          nudge(book.id);
+          setNotice(
+            barcode
+              ? { kind: "ok", text: `Added to the queue. ISBN ${formatIsbn(barcode)} read from the barcode.` }
+              : { kind: "warn", text: "Added to the queue. No barcode found in the back photo, so the AI is looking for the ISBN." },
+          );
+        }
       } catch (e) {
         if (e instanceof BookOpsApiError && e.loggedOut) setState("login");
-        setNotice({ kind: "error", text: `That book wasn't added (${message(e).replace(/\.$/, "")}). Photograph it again.` });
+        setNotice({ kind: "error", text: `Those photos weren't saved (${message(e).replace(/\.$/, "")}). Take them again.` });
       } finally {
         setAdding((n) => n - 1);
       }
@@ -239,7 +277,7 @@ export function BookOpsScreen() {
     if (!parsed.ok) return setIsbnNote(parsed.reason);
     setIsbnNote(null);
     try {
-      const book = await bookOps.add({ id: crypto.randomUUID(), isbn: parsed.isbn13, isbnSource: "typed" });
+      const { book } = await bookOps.add({ id: crypto.randomUUID(), isbn: parsed.isbn13, isbnSource: "typed" });
       setIsbn("");
       put(book);
       open(book.id);
@@ -262,6 +300,17 @@ export function BookOpsScreen() {
 
   const book = books.find((b) => b.id === selected) ?? null;
   const todo = books.filter((b) => b.status === "draft");
+  /** Books still to do that share an ISBN: another copy, or a double scan. */
+  const sameIsbn = (b: BookOpsBook) => (b.isbn13 ? todo.filter((x) => x.isbn13 === b.isbn13) : []);
+  /** The open book, when it still lacks photos: the camera's pictures go to it. */
+  const target: CameraTarget | null =
+    book && book.status === "draft" && (!book.frontPhoto || !book.backPhoto)
+      ? {
+          id: book.id,
+          title: book.title?.trim() || (book.isbn13 ? formatIsbn(book.isbn13) : "the open book"),
+          sides: [...(book.backPhoto ? [] : (["back"] as const)), ...(book.frontPhoto ? [] : (["front"] as const))],
+        }
+      : null;
   const listed = books.filter((b) => b.status === "listed");
   const locked = book?.status === "listed";
 
@@ -339,6 +388,7 @@ export function BookOpsScreen() {
             <span className="flex flex-wrap items-center gap-1">
               <span className={`rounded-full px-2 py-px text-[11px] font-semibold ${PILL[s]}`}>{QUEUE_LABEL[s]}</span>
               {s !== "listed" && s !== "reading" && needsCheck(b) && <Tag kind="warn">Check</Tag>}
+              {s !== "listed" && sameIsbn(b).length > 1 && <Tag kind="info">Same ISBN · {sameIsbn(b).length} in queue</Tag>}
             </span>
             <span className="w-full truncate text-sm font-medium">{b.title?.trim() || (b.isbn13 ? formatIsbn(b.isbn13) : s === "reading" ? "New book" : "Untitled book")}</span>
             <span className="w-full truncate text-xs text-muted">
@@ -419,7 +469,7 @@ export function BookOpsScreen() {
               </ul>
             ) : (
               <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">
-                Nothing in the queue. Photograph a book&apos;s front and back cover with the camera, or on a phone in BookOps.
+                Nothing in the queue. Scan a barcode on a phone in BookOps, type an ISBN above, or photograph a book&apos;s back and front cover.
               </p>
             )}
           </section>
@@ -463,6 +513,22 @@ export function BookOpsScreen() {
                 </div>
               )}
             </div>
+
+            {!locked && sameIsbn(book).length > 1 && (
+              <p role="status" aria-label="Same ISBN" className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-accent/30 bg-accent/5 p-2.5 text-sm">
+                <span>
+                  {sameIsbn(book).length === 2 ? "Another copy of this book is" : `${sameIsbn(book).length - 1} other copies of this book are`} in the queue — a
+                  second copy, or scanned twice by accident?
+                </span>
+                {sameIsbn(book)
+                  .filter((x) => x.id !== book.id)
+                  .map((x, i) => (
+                    <button key={x.id} type="button" onClick={() => open(x.id)} className="font-semibold text-accent underline">
+                      Open {sameIsbn(book).length > 2 ? `copy ${i + 1}` : "the other"}
+                    </button>
+                  ))}
+              </p>
+            )}
 
             {locked && (
               <div role="status" aria-label="In the web store" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-emerald-600/30 bg-emerald-500/10 p-3 text-sm">
@@ -637,13 +703,31 @@ export function BookOpsScreen() {
           </section>
         ) : (
           <p className="rounded-xl border border-dashed border-line p-8 text-center text-sm text-muted">
-            {books.length ? "Choose a book from the queue." : "Photograph a book to start: front cover, then back cover."}
+            {books.length ? "Choose a book from the queue." : "Scan a book on the phone to start, or type its ISBN above."}
           </p>
         )}
 
         <aside className="flex flex-col gap-5">
-          <BookOpsCamera onBook={(shots) => void onBook(shots)} notice={notice} />
-          {book && (book.frontPhoto || book.backPhoto) && (
+          {webcam ? (
+            <>
+              <BookOpsCamera target={target} onShots={(shots) => void onShots(shots)} notice={notice} />
+              <button type="button" onClick={() => chooseWebcam(false)} className="self-start text-sm font-medium text-accent underline-offset-2 hover:underline">
+                Hide the computer&apos;s camera
+              </button>
+            </>
+          ) : (
+            <section aria-label="Photos from the phone" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-4 text-sm">
+              <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Photos</h2>
+              <p>
+                Taken on the phone: <strong>Extract → BookOps</strong>, then <strong>Needs photos</strong>. They appear here by
+                themselves, and the AI reads the back-cover text.
+              </p>
+              <button type="button" onClick={() => chooseWebcam(true)} className="self-start font-medium text-accent underline-offset-2 hover:underline">
+                Use the computer&apos;s camera
+              </button>
+            </section>
+          )}
+          {book && (
             <section aria-label="Photos of this book" className="flex flex-col gap-2 border-t border-line pt-4">
               <h2 className="text-xs font-semibold tracking-wider text-muted uppercase">Photos of this book</h2>
               <div className="grid grid-cols-2 gap-3">
@@ -654,18 +738,32 @@ export function BookOpsScreen() {
                   ] as const
                 ).map(([caption, src]) =>
                   src ? (
-                    <a key={caption} href={src} target="_blank" rel="noreferrer" className="flex flex-col gap-1.5 text-xs text-muted">
+                    <button
+                      key={caption}
+                      type="button"
+                      onClick={() => setViewing({ src, caption })}
+                      aria-label={`Show larger: ${caption}`}
+                      className="flex cursor-zoom-in flex-col gap-1.5 text-left text-xs text-muted"
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={src} alt="" className="aspect-[4/3] w-full rounded-md bg-line/70 object-contain" />
+                      <img src={src} alt="" className="aspect-[3/4] w-full rounded-md bg-line/70 object-contain" />
                       {caption}
-                    </a>
-                  ) : null,
+                    </button>
+                  ) : (
+                    <div key={caption} className="flex flex-col gap-1.5 text-xs text-muted">
+                      <span className="flex aspect-[3/4] w-full items-center justify-center rounded-md border border-dashed border-line p-2 text-center">
+                        {book.status === "draft" ? "Waiting for the photo from the phone" : "No photo"}
+                      </span>
+                      {caption}
+                    </div>
+                  ),
                 )}
               </div>
             </section>
           )}
         </aside>
       </div>
+      <PhotoViewer photo={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

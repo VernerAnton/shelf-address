@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { APP_VERSION, BUILD_ID } from "@/lib/version";
+import { APP_VERSION, BUILD_ID, isNewerVersion } from "@/lib/version";
 
 /** The backstop. The visibility check below does nearly all the work. */
 const CHECK_EVERY_MS = 60 * 60 * 1000;
@@ -11,7 +11,7 @@ const CHECK_EVERY_MS = 60 * 60 * 1000;
 const SW_URL = "/sw.js";
 const SW_SCOPE = "/";
 
-type Newer = { version: number };
+type Newer = { version: string | number };
 
 /**
  * Registers the service worker, and tells the person when a newer build has
@@ -61,7 +61,7 @@ export function AppUpdate() {
           redirect: "manual",
         });
         if (response.ok) {
-          const server = (await response.json()) as { version: number; buildId: string };
+          const server = (await response.json()) as { version: string | number; buildId: string };
           if (server.buildId !== BUILD_ID) stale.current = { version: server.version };
         }
       } catch {
@@ -99,7 +99,7 @@ export function AppUpdate() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="min-w-0 flex-1">
           <p className="font-medium">
-            {offer.version > APP_VERSION
+            {isNewerVersion(offer.version, APP_VERSION)
               ? `A newer version (V${offer.version}) is ready.`
               : "A newer version is ready."}
           </p>

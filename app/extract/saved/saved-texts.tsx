@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { textFileName } from "@/lib/extract-text";
 import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
 
@@ -20,6 +19,22 @@ function when(iso: string) {
 
 const firstWords = (text: string) => text.replace(/\s+/g, " ").slice(0, 90);
 
+/** The front cover's address; a new photo has a new one, so it's never an old copy from the cache. */
+const coverUrl = (t: SavedText) => `/api/extract/texts/${t.id}/cover?v=${encodeURIComponent(t.coverAt ?? "")}`;
+
+/** The front cover as a PNG: what a clipboard takes, everywhere. */
+async function asPng(url: string): Promise<Blob> {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error("No picture");
+  const bitmap = await createImageBitmap(await response.blob());
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("No picture"))), "image/png"));
+}
+
 /**
  * Saved texts (docs/spec-corrections.md §24): what Extract read on the
  * phones, ready on the computer — no sharing step. Laid out for a big screen
@@ -30,12 +45,19 @@ const firstWords = (text: string) => text.replace(/\s+/g, " ").slice(0, 90);
  * The text can be corrected here (§26) — easier than on a phone. Corrections
  * save by themselves; once a text is corrected here, the phone can't change
  * it any more.
+ *
+ * Since V28 (§28): the book's front cover shows large beside the text, to
+ * judge it and copy it straight into a listing; a bad reading can be reported
+ * from here; no Download .txt.
  */
 export function SavedTexts() {
   const [state, setState] = useState<"loading" | "login" | "ready" | "offline">("loading");
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pictureCopied, setPictureCopied] = useState(false);
+  const [zoom, setZoom] = useState(false);
+  const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const pending = useRef<{ timer: ReturnType<typeof setTimeout>; run: () => void } | null>(null);
 
@@ -53,6 +75,14 @@ export function SavedTexts() {
       setState((s) => (s === "loading" ? "offline" : s));
     }
   }, []);
+
+  // The full-size picture closes with Esc.
+  useEffect(() => {
+    if (!zoom) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoom(false);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [zoom]);
 
   useEffect(() => {
     const first = setTimeout(() => void load(), 0);
@@ -119,6 +149,8 @@ export function SavedTexts() {
   const open = (id: string | null) => {
     flush();
     setDraft(null);
+    setReport(null);
+    setZoom(false);
     setSelected(id);
   };
 
@@ -132,13 +164,32 @@ export function SavedTexts() {
     }
   };
 
-  const download = (t: SavedText) => {
-    const body = shown.trim() || t.text;
-    const file = new File([body + "\n"], textFileName(body, new Date(t.createdAt)), { type: "text/plain" });
-    const url = URL.createObjectURL(file);
-    const a = Object.assign(document.createElement("a"), { href: url, download: file.name });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  /** Puts the front cover on the clipboard, to paste (Ctrl+V) into a listing. */
+  const copyPicture = async (t: SavedText) => {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": asPng(coverUrl(t)) })]);
+      setPictureCopied(true);
+      setTimeout(() => setPictureCopied(false), 2000);
+    } catch {
+      window.alert("Couldn't copy the picture. Use Download picture, or drag the picture into the other site.");
+    }
+  };
+
+  /** A bad reading, reported from here: its photos and what came back go to the Photo log (§28). */
+  const sendReport = async (t: SavedText, note: string) => {
+    setReport({ id: t.id, note, status: "sending" });
+    try {
+      const response = await fetch(`/api/extract/texts/${t.id}/report`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (!response.ok) throw new Error(body?.error ?? "Couldn't send the report. Try again.");
+      setReport({ id: t.id, note, status: "sent" });
+    } catch (e) {
+      setReport({ id: t.id, note, status: "error", error: (e as Error).message });
+    }
   };
 
   /**
@@ -175,13 +226,19 @@ export function SavedTexts() {
         type="button"
         onClick={() => open(t.id)}
         aria-current={t.id === selected ? "true" : undefined}
-        className={`flex w-full flex-col gap-1 px-4 py-3 text-left ${t.id === selected ? "bg-accent/10" : "active:bg-line/50"}`}
+        className={`flex w-full gap-3 px-4 py-3 text-left ${t.id === selected ? "bg-accent/10" : "active:bg-line/50"}`}
       >
-        <span className="flex items-center justify-between gap-2 text-xs text-muted">
-          <span>{when(t.createdAt)}</span>
-          <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
+        {t.coverAt && (
+          // eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login
+          <img src={coverUrl(t)} alt="" loading="lazy" className="h-14 w-10 shrink-0 rounded bg-line object-cover" />
+        )}
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex items-center justify-between gap-2 text-xs text-muted">
+            <span>{when(t.createdAt)}</span>
+            <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
+          </span>
+          <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
         </span>
-        <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
       </button>
     </li>
   );
@@ -190,7 +247,7 @@ export function SavedTexts() {
     <>
       <p className="text-sm text-muted">
         Texts read in <Link href="/extract" className="font-medium text-accent">Extract</Link> on a logged-in phone appear here by
-        themselves. Kept for 30 days after their last change.
+        themselves. Kept for 7 days after their last change.
       </p>
 
       {texts.length === 0 ? (
@@ -199,25 +256,30 @@ export function SavedTexts() {
         </p>
       ) : (
         <div className="md:grid md:grid-cols-[20rem_1fr] md:items-start md:gap-6">
-          <div aria-label="Saved texts" className={`flex flex-col gap-6 ${text ? "hidden md:flex" : ""}`}>
-            <section aria-label="To do" className="flex flex-col gap-2">
+          {/* On a computer the list fits the window and scrolls inside itself, so the page doesn't (V27).
+              The heights below allow for both bottom rows: the tabs and Extract's own (BookOps | Text Extract). */}
+          <div
+            aria-label="Saved texts"
+            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-21rem)] ${text ? "hidden md:flex" : ""}`}
+          >
+            <section aria-label="To do" className="flex min-h-0 flex-col gap-2">
               <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
               {todo.length ? (
-                <ul className="overflow-hidden rounded-xl border border-line bg-surface">{todo.map(row)}</ul>
+                <ul className="min-h-0 overflow-hidden rounded-xl border border-line bg-surface md:overflow-y-auto">{todo.map(row)}</ul>
               ) : (
                 <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">Nothing left to do.</p>
               )}
             </section>
             {done.length > 0 && (
-              <section aria-label="Done" className="flex flex-col gap-2">
+              <section aria-label="Done" className="flex min-h-0 flex-col gap-2 md:max-h-[45%]">
                 <h2 className="px-1 text-sm font-semibold text-muted">✓ Done ({done.length})</h2>
-                <ul className="overflow-hidden rounded-xl border border-line bg-surface opacity-60">{done.map(row)}</ul>
+                <ul className="min-h-0 overflow-hidden rounded-xl border border-line bg-surface opacity-60 md:overflow-y-auto">{done.map(row)}</ul>
               </section>
             )}
           </div>
 
           {text && (
-            <section aria-label="Selected text" className="flex flex-col gap-3">
+            <section aria-label="Selected text" className="flex min-w-0 flex-col gap-3">
               <button type="button" onClick={() => open(null)} className="self-start text-sm font-medium text-accent md:hidden">
                 ← All texts
               </button>
@@ -226,46 +288,147 @@ export function SavedTexts() {
                 {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
                 {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
                 {text.editedOnComputerAt && " · corrected on the computer"}
+                {!text.coverAt && " · no front cover photo"}
               </p>
               {text.doneAt && <p className="-mt-1 text-sm font-medium text-muted">✓ Done — moved to the Done list.</p>}
-              <textarea
-                aria-label="Text"
-                value={shown}
-                onChange={(e) => edit(text, e.target.value)}
-                onBlur={flush}
-                lang="fi"
-                spellCheck
-                rows={14}
-                className="min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:text-lg"
-              />
-              <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
-                {draft?.id === text.id
-                  ? draft.status === "saving"
-                    ? "Saving…"
-                    : draft.status === "saved"
-                      ? "✓ Correction saved. The phone can't change this text any more."
-                      : (draft.error ?? "Couldn't save the correction.")
-                  : "You can correct the text right here — it saves by itself."}
-              </p>
-              <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
-                <button type="button" onClick={() => void copy(text)} className={`${button} bg-accent text-accent-contrast`}>
-                  {copied ? "Copied ✓" : "Copy"}
-                </button>
-                <button type="button" onClick={() => download(text)} className={`${button} border border-line bg-surface`}>
-                  Download .txt
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void setDone(text, !text.doneAt)}
-                  className={`${button} border border-line bg-surface`}
-                >
-                  {text.doneAt ? "Not done" : "✓ Mark done"}
-                </button>
-                <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
-                  Delete
-                </button>
+              <div className={text.coverAt ? "flex flex-col gap-4 md:flex-row md:items-start" : ""}>
+                <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  <textarea
+                    aria-label="Text"
+                    value={shown}
+                    onChange={(e) => edit(text, e.target.value)}
+                    onBlur={flush}
+                    lang="fi"
+                    spellCheck
+                    rows={14}
+                    className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
+                      // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
+                      // On a wide screen (the page grows with a cover) they fit on one row again.
+                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-28rem)]"
+                    }`}
+                  />
+                  <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
+                    {draft?.id === text.id
+                      ? draft.status === "saving"
+                        ? "Saving…"
+                        : draft.status === "saved"
+                          ? "✓ Correction saved. The phone can't change this text any more."
+                          : (draft.error ?? "Couldn't save the correction.")
+                      : "You can correct the text right here — it saves by itself."}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
+                    <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
+                      {copied ? "Copied ✓" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void setDone(text, !text.doneAt)}
+                      className={`${button} border border-line bg-surface`}
+                    >
+                      {text.doneAt ? "Not done" : "✓ Mark done"}
+                    </button>
+                    <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
+                      Delete
+                    </button>
+                    {report?.id !== text.id && (
+                      <button
+                        type="button"
+                        onClick={() => setReport({ id: text.id, note: "", status: "open" })}
+                        aria-label="Report a problem"
+                        className={`${button} whitespace-normal bg-danger text-center leading-tight text-background`}
+                      >
+                        {/* On two lines, so it fits beside the others on one row (V31). */}
+                        <span>
+                          Report a
+                          <br />
+                          problem
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {text.coverAt && (
+                  <figure aria-label="Front cover" className="flex flex-col items-start gap-2 xl:flex-row">
+                    <button type="button" onClick={() => setZoom(true)} title="Click to see it full size" className="cursor-zoom-in">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login */}
+                      <img
+                        src={coverUrl(text)}
+                        alt="Front cover"
+                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]"
+                      />
+                    </button>
+                    {/*
+                      On a wide screen the buttons sit beside the picture, so it can be as tall as the whole text
+                      column. Its size is also held to the width the text column can spare: the text's buttons need
+                      ~30rem to stay on one row, and the list, gaps and these buttons take 66rem of the page.
+                    */}
+                    <div className="grid w-full grid-cols-2 gap-2 md:flex xl:w-auto xl:flex-col">
+                      <button type="button" onClick={() => void copyPicture(text)} className={`${button} bg-accent text-accent-contrast`}>
+                        {pictureCopied ? "Picture copied ✓" : "Copy picture"}
+                      </button>
+                      <a href={coverUrl(text)} download={`etukansi-${firstWords(text.text).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "kirja"}.jpg`} className={`${button} border border-line bg-surface`}>
+                        Download picture
+                      </a>
+                    </div>
+                  </figure>
+                )}
               </div>
+
+              {report?.id === text.id && (
+                <div role="region" aria-label="Report a problem" className="flex max-w-xl flex-col gap-2 rounded-xl border border-danger/40 p-3">
+                  {report.status === "sent" ? (
+                    <p role="status" className="text-sm text-muted">
+                      ✓ Reported — the photo and what the AI sent back are in the{" "}
+                      <Link href="/photo-log" className="font-medium text-accent">
+                        Photo log
+                      </Link>
+                      , to find out what went wrong.
+                    </p>
+                  ) : (
+                    <>
+                      <label htmlFor="report-note" className="text-sm font-medium">
+                        What went wrong? <span className="font-normal text-muted">(optional)</span>
+                      </label>
+                      <textarea
+                        id="report-note"
+                        value={report.note}
+                        onChange={(e) => setReport({ ...report, note: e.target.value })}
+                        rows={2}
+                        placeholder="For example: cut off after the second paragraph"
+                        className="w-full rounded-xl border border-line bg-surface p-3 text-base outline-none focus:border-accent"
+                      />
+                      {report.status === "error" && <p className="text-sm text-danger">{report.error}</p>}
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={report.status === "sending"}
+                          onClick={() => void sendReport(text, report.note.trim())}
+                          className={`${button} bg-danger text-background disabled:opacity-40`}
+                        >
+                          {report.status === "sending" ? "Sending…" : "Send report"}
+                        </button>
+                        <button type="button" onClick={() => setReport(null)} className={`${button} border border-line bg-surface`}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </section>
+          )}
+
+          {text?.coverAt && zoom && (
+            <div
+              role="dialog"
+              aria-label="Front cover, full size"
+              onClick={() => setZoom(false)}
+              className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/85 p-4"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login */}
+              <img src={coverUrl(text)} alt="Front cover, full size" className="max-h-full max-w-full object-contain" />
+            </div>
           )}
         </div>
       )}

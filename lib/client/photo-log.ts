@@ -38,15 +38,19 @@ export function setPhotoLogOn(on: boolean) {
 
 export type NewEntry = Omit<PhotoLogMeta, "id" | "screen" | "userAgent" | "appVersion"> & { id?: string };
 
-/** Saves an entry on the phone (that's all that's waited for) and uploads it in the background. */
-export async function logPhoto(entry: NewEntry, photo: Blob | null, thumb: Blob | null): Promise<void> {
-  if (!photoLogOn()) return;
+/**
+ * Saves an entry on the phone (that's all that's waited for) and uploads it in
+ * the background. `always`: a report someone chose to send, kept even where
+ * the log is switched off on this phone.
+ */
+export async function logPhoto(entry: NewEntry, photo: Blob | null, thumb: Blob | null, { always = false } = {}): Promise<void> {
+  if (!always && !photoLogOn()) return;
   const meta: PhotoLogMeta = {
     ...entry,
     id: entry.id ?? crypto.randomUUID(),
     screen: location.pathname,
     userAgent: navigator.userAgent,
-    appVersion: APP_VERSION,
+    appVersion: Number(APP_VERSION),
   };
   const pending = (await kvGet<string[]>(PENDING_KEY)) ?? [];
   const keep = [...pending, meta.id];

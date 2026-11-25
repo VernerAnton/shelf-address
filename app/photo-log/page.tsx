@@ -43,10 +43,10 @@ function Entry({ e }: { e: PhotoLogEntry }) {
   ].filter(Boolean);
   return (
     <li className="flex gap-3 border-b border-line p-3 last:border-0">
-      {e.hasThumb ? (
+      {e.hasThumb || e.hasPhoto ? (
         <a href={`/api/photo-log/${e.id}/photo`} target="_blank" rel="noopener" className="shrink-0">
           {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API, sizes vary */}
-          <img src={`/api/photo-log/${e.id}/thumb`} alt="Photo" loading="lazy" className="size-20 rounded-md bg-line object-cover" />
+          <img src={`/api/photo-log/${e.id}/${e.hasThumb ? "thumb" : "photo"}`} alt="Photo" loading="lazy" className="size-20 rounded-md bg-line object-cover" />
         </a>
       ) : (
         <div className="flex size-20 shrink-0 items-center justify-center rounded-md bg-line text-center text-xs text-muted">no photo</div>
@@ -54,7 +54,7 @@ function Entry({ e }: { e: PhotoLogEntry }) {
       <div className="flex min-w-0 flex-1 flex-col gap-1 text-sm">
         <div className="flex items-start justify-between gap-2">
           <span className={`font-semibold ${good ? "text-accent" : e.outcome === "none" ? "text-warn-text" : "text-danger"}`}>
-            {LABELS[e.outcome]}
+            {e.screen === "/extract/saved" ? "Extract: reported on the computer" : e.screen === "/extract" ? "Extract: reported problem" : LABELS[e.outcome]}
           </span>
           <span className="shrink-0 text-xs text-muted">{when(e.takenAt)}</span>
         </div>
@@ -63,7 +63,7 @@ function Entry({ e }: { e: PhotoLogEntry }) {
         <span className="text-xs text-muted">{[phone(e.userAgent), ...details].join(" · ")}</span>
         {e.ocrText && (
           <details className="text-xs">
-            <summary className="cursor-pointer text-muted">Text the reader saw</summary>
+            <summary className="cursor-pointer text-muted">{e.screen.startsWith("/extract") ? "The report: how it was read, and what came back" : "Text the reader saw"}</summary>
             <pre className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap rounded-md bg-line/50 p-2 font-mono">{e.ocrText}</pre>
           </details>
         )}
@@ -87,13 +87,17 @@ function Entry({ e }: { e: PhotoLogEntry }) {
  */
 export default async function PhotoLogPage() {
   const entries = await listPhotoLog(200);
-  const counts = entries.reduce<Partial<Record<PhotoOutcome, number>>>((c, e) => ({ ...c, [e.outcome]: (c[e.outcome] ?? 0) + 1 }), {});
+  const isReport = (e: PhotoLogEntry) => e.screen.startsWith("/extract");
+  const reports = entries.filter(isReport).length;
+  const counts = entries
+    .filter((e) => !isReport(e))
+    .reduce<Partial<Record<PhotoOutcome, number>>>((c, e) => ({ ...c, [e.outcome]: (c[e.outcome] ?? 0) + 1 }), {});
   return (
     <main className="mx-auto flex w-full max-w-md flex-1 flex-col gap-4 px-4 pt-6 pb-6">
       <h1 className="text-2xl font-semibold tracking-tight">Photo log</h1>
       <p className="text-sm text-muted">
         Every photo taken with &ldquo;Camera struggling? Take a photo&rdquo;, with what the app made of it — to find out why
-        reading ISBNs fails. Kept for 30 days.
+        reading ISBNs fails — and problems reported from Extract. Kept for 30 days.
       </p>
       <PhotoLogControls />
       {entries.length === 0 ? (
@@ -105,6 +109,7 @@ export default async function PhotoLogPage() {
             {(Object.keys(LABELS) as PhotoOutcome[])
               .filter((o) => counts[o])
               .map((o) => `${counts[o]} ${LABELS[o].toLowerCase()}`)
+              .concat(reports ? [`${reports} reported from Extract`] : [])
               .join(", ")}
           </p>
           <ul aria-label="Photos" className="overflow-hidden rounded-xl border border-line bg-surface">

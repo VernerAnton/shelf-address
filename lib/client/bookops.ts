@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The browser's side of BookOps (docs/spec-corrections.md §27): turning what
+ * The browser's side of BookOps (docs/spec-corrections.md §30): turning what
  * the camera sees into photos, reading the barcode off the back-cover photo,
  * and talking to BookOps' API.
  */
@@ -23,14 +23,74 @@ function canvasOf(source: CanvasImageSource, width: number, height: number, maxS
   return canvas;
 }
 
-/** What the camera shows right now, at the camera's full size. Null before the first picture arrives. */
-export function frameOf(video: HTMLVideoElement): HTMLCanvasElement | null {
-  if (!video.videoWidth || !video.videoHeight) return null;
-  return canvasOf(video, video.videoWidth, video.videoHeight, Math.max(video.videoWidth, video.videoHeight));
+/**
+ * How the camera's picture is shown and saved (docs/spec-corrections.md §30):
+ * - shape "upright": a book-shaped 3:4 portrait cut from the middle of the
+ *   picture (a webcam is wide, a book is tall); "whole": all of it;
+ * - zoom: 1 = as large as fits, 2 = half as wide and high (digital zoom: it
+ *   uses fewer of the camera's pixels);
+ * - turn: for a webcam mounted on its side — then a portrait uses the
+ *   camera's full width, much sharper.
+ * What's shown is exactly what's saved.
+ */
+export type CameraView = { shape: "upright" | "whole"; zoom: number; turn: 0 | 90 | 180 | 270 };
+export const DEFAULT_VIEW: CameraView = { shape: "upright", zoom: 1, turn: 0 };
+export const ZOOMS = [1, 1.25, 1.5, 2, 2.5, 3];
+
+/** The part of the (turned) picture that's shown and saved, in the turned picture's pixels. */
+export function viewRect(videoWidth: number, videoHeight: number, view: CameraView) {
+  const sideways = view.turn % 180 !== 0;
+  const w = sideways ? videoHeight : videoWidth;
+  const h = sideways ? videoWidth : videoHeight;
+  let cw = w / view.zoom;
+  let ch = h / view.zoom;
+  if (view.shape === "upright") {
+    if (cw / ch > 3 / 4) cw = (ch * 3) / 4;
+    else ch = (cw * 4) / 3;
+  }
+  return { turnedWidth: w, turnedHeight: h, x: (w - cw) / 2, y: (h - ch) / 2, width: cw, height: ch };
+}
+
+/** Draws the view of the camera's current picture into `canvas`, at most `maxSide` pixels on its longer side. */
+export function drawView(video: HTMLVideoElement, view: CameraView, canvas: HTMLCanvasElement, maxSide: number): boolean {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return false;
+  const r = viewRect(vw, vh, view);
+  const k = Math.min(1, maxSide / Math.max(r.width, r.height));
+  const width = Math.max(1, Math.round(r.width * k));
+  const height = Math.max(1, Math.round(r.height * k));
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return false;
+  context.save();
+  context.scale(k, k);
+  context.translate(-r.x, -r.y);
+  // Turned clockwise by `turn` degrees.
+  if (view.turn === 90) {
+    context.translate(r.turnedWidth, 0);
+    context.rotate(Math.PI / 2);
+  } else if (view.turn === 180) {
+    context.translate(r.turnedWidth, r.turnedHeight);
+    context.rotate(Math.PI);
+  } else if (view.turn === 270) {
+    context.translate(0, r.turnedHeight);
+    context.rotate(-Math.PI / 2);
+  }
+  context.drawImage(video, 0, 0, vw, vh);
+  context.restore();
+  return true;
+}
+
+/** What the camera shows right now, as the view shows it, at the camera's full sharpness. Null before the first picture arrives. */
+export function frameOf(video: HTMLVideoElement, view: CameraView = DEFAULT_VIEW): HTMLCanvasElement | null {
+  const canvas = document.createElement("canvas");
+  return drawView(video, view, canvas, WORK_SIDE) ? canvas : null;
 }
 
 /** A photo file (from the phone's camera app, or chosen on the computer), ready to work on. */
-export async function canvasOfFile(file: File): Promise<HTMLCanvasElement> {
+export async function canvasOfFile(file: Blob): Promise<HTMLCanvasElement> {
   const bitmap = await createImageBitmap(file);
   try {
     return canvasOf(bitmap, bitmap.width, bitmap.height, WORK_SIDE);
@@ -131,7 +191,15 @@ export const bookOps = {
       form.set("isbn", book.isbn);
       form.set("isbnSource", book.isbnSource ?? "barcode");
     }
-    return call<One>("/books", { method: "POST", body: form }).then((r) => r.book);
+    return call<One & { sameIsbn: number }>("/books", { method: "POST", body: form });
+  },
+  /** Photos for a book already in the queue: only the sides it doesn't have are kept. */
+  attach: (id: string, photos: { front?: Blob; back?: Blob; isbn?: string | null }) => {
+    const form = new FormData();
+    if (photos.front) form.set("front", photos.front, "front.jpg");
+    if (photos.back) form.set("back", photos.back, "back.jpg");
+    if (photos.isbn) form.set("isbn", photos.isbn);
+    return call<One>(`/books/${id}/photos`, { method: "POST", body: form }).then((r) => r.book);
   },
   edit: (id: string, patch: Record<string, unknown>) => call<One>(`/books/${id}`, json("PATCH", patch)).then((r) => r.book),
   remove: (id: string) => call<{ ok: boolean }>(`/books/${id}`, { method: "DELETE" }),
@@ -140,3 +208,63 @@ export const bookOps = {
   send: (id: string) => call<One>(`/books/${id}/send`, { method: "POST" }).then((r) => r.book),
   takeBack: (id: string) => call<One>(`/books/${id}/send`, { method: "DELETE" }).then((r) => r.book),
 };
+
+/** A rectangle in pixels. */
+export type Rect = { x: number; y: number; width: number; height: number };
+
+/**
+ * Where the on-screen frame is in a photo (docs/spec-corrections.md §30), so
+ * the photo can be cut to it: what's inside the dotted frame is what's saved.
+ *
+ * - `box`: the area the live picture fills on screen (CSS px), shown with
+ *   object-fit: cover (its edges may be cut off);
+ * - `frame`: the dotted frame, in the same CSS px, relative to the box;
+ * - `video`: the live picture's size; `photo`: the photo's size.
+ *
+ * A phone's still photo can be a different shape than its live picture (a
+ * 4:3 sensor photo, a 16:9 live picture): the live picture is then the middle
+ * of the photo, and the frame is mapped through that. Returns null when the
+ * photo is turned the other way from the live picture (can't be matched).
+ */
+export function frameInPhoto(
+  box: { width: number; height: number },
+  frame: Rect,
+  video: { width: number; height: number },
+  photo: { width: number; height: number },
+): Rect | null {
+  if ((video.width > video.height) !== (photo.width > photo.height) && Math.abs(video.width / video.height - 1) > 0.05) return null;
+  // The live picture on screen (cover): scale and the part cut off each side.
+  const scale = Math.max(box.width / video.width, box.height / video.height);
+  const ox = (box.width - video.width * scale) / 2;
+  const oy = (box.height - video.height * scale) / 2;
+  // The frame as fractions of the live picture, kept inside it.
+  const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const u0 = clamp((frame.x - ox) / scale / video.width);
+  const v0 = clamp((frame.y - oy) / scale / video.height);
+  const u1 = clamp((frame.x + frame.width - ox) / scale / video.width);
+  const v1 = clamp((frame.y + frame.height - oy) / scale / video.height);
+  // The live picture's part of the photo: all of it, or its middle if the shapes differ.
+  const va = video.width / video.height;
+  const pa = photo.width / photo.height;
+  let px = 0;
+  let py = 0;
+  let pw = photo.width;
+  let ph = photo.height;
+  if (pa < va) {
+    ph = photo.width / va;
+    py = (photo.height - ph) / 2;
+  } else if (pa > va) {
+    pw = photo.height * va;
+    px = (photo.width - pw) / 2;
+  }
+  return { x: px + u0 * pw, y: py + v0 * ph, width: (u1 - u0) * pw, height: (v1 - v0) * ph };
+}
+
+/** The part of `canvas` inside `rect`, as a new canvas. */
+export function cropCanvas(canvas: HTMLCanvasElement, rect: Rect): HTMLCanvasElement {
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(rect.width));
+  out.height = Math.max(1, Math.round(rect.height));
+  out.getContext("2d")?.drawImage(canvas, rect.x, rect.y, rect.width, rect.height, 0, 0, out.width, out.height);
+  return out;
+}

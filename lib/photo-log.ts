@@ -67,7 +67,8 @@ export function parseMeta(raw: unknown): PhotoLogMeta {
     bytes: int(m.bytes),
     mime: text(m.mime, 100),
     userAgent: text(m.userAgent, 500),
-    appVersion: int(m.appVersion),
+    // "32.1" is sent as 32.1: kept as it is, not rounded.
+    appVersion: typeof m.appVersion === "number" && Number.isFinite(m.appVersion) ? m.appVersion : null,
   };
 }
 

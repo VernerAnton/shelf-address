@@ -1,5 +1,6 @@
 // Extract (docs/spec-corrections.md §22): back-cover text from a photo, tidied,
-// editable, shared as a .txt file or copied, kept on the phone.
+// editable, kept on the phone. Since V28 (§28): no Share or Copy, a big red
+// Report button, Start over straight to the camera, earlier texts kept on the phone.
 const { chromium, devices } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright");
 let passed = 0; const failures = [];
 const check = (name, cond, extra = "") => { if (cond) passed++; else failures.push(name + (extra ? ` — ${extra}` : "")); };
@@ -31,13 +32,7 @@ const MORE = ["Kansi: Otava. Painettu EU-", "maissa vuonna 2004."];
 (async () => {
   const errors = [];
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788", permissions: ["clipboard-read", "clipboard-write"] });
-  // The phone's share menu, recorded instead of opened.
-  await ctx.addInitScript(() => {
-    window.__shared = [];
-    navigator.canShare = (d) => Boolean(d && d.files && d.files.length);
-    navigator.share = async (d) => { for (const f of d.files || []) window.__shared.push({ name: f.name, type: f.type, text: await f.text() }); if (d.text) window.__shared.push({ text: d.text }); };
-  });
+  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788" });
   const page = await ctx.newPage(); page.setDefaultTimeout(20000);
   page.on("pageerror", (e) => errors.push(String(e)));
   const take = async (b64) => page.getByLabel("Text photo").setInputFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer: Buffer.from(b64, "base64") });
@@ -56,18 +51,11 @@ const MORE = ["Kansi: Otava. Painettu EU-", "maissa vuonna 2004."];
   check("paragraph break kept", /tarkasti\.\n\nTeos/.test(text), JSON.stringify(text));
   check("word count shown", await visible(page.getByText(/^\d+ words$/)));
 
-  // Share: a .txt file named after the first words.
-  await page.getByRole("button", { name: "Share", exact: true }).click();
-  await sleep(500);
-  const shared = await page.evaluate(() => window.__shared);
-  check("Share sends a .txt file", shared.length === 1 && shared[0].type === "text/plain" && /^vaino-linnan-romaani-kertoo-\d{4}-\d\d-\d\d-\d{4}\.txt$/.test(shared[0].name), JSON.stringify(shared).slice(0, 200));
-  check("…holding the text", shared[0] && shared[0].text.trim() === text.trim());
-  check("explains OneDrive", await visible(page.getByText(/choose OneDrive/)));
-
-  // Copy.
-  await page.getByRole("button", { name: "Copy" }).click();
-  check("Copy says so", await visible(page.getByRole("button", { name: /Copied/ })));
-  check("…and copies the text", (await page.evaluate(() => navigator.clipboard.readText())).trim() === text.trim());
+  // V28: no Share or Copy; a big red Report button instead.
+  check("no Share or Copy buttons", (await page.getByRole("button", { name: /^(Share|Copy)$/ }).count()) === 0);
+  const red = page.getByRole("region", { name: "Report a problem" }).getByRole("button", { name: "Report a problem" });
+  check("big red Report a problem button", await visible(red) && (await red.boundingBox()).height >= 56 && /bg-danger/.test(await red.getAttribute("class")));
+  check("not logged in: no front cover button (it goes to the computer)", (await page.getByRole("button", { name: "Take a photo of the front cover" }).count()) === 0);
 
   // Corrections are kept, also across closing the app.
   await box.fill(text.replace("Teos on", "Kirja on"));
@@ -80,38 +68,49 @@ const MORE = ["Kansi: Otava. Painettu EU-", "maissa vuonna 2004."];
   const both = await box.inputValue();
   check("another photo adds its text at the end", /Kirja on myyty/.test(both) && /\n\nKansi: Otava\. Painettu EU-maissa vuonna 2004\./.test(both), JSON.stringify(both.slice(-120)));
 
-  // Sideways photo.
-  await page.once("dialog", (d) => d.accept());
+  // Start over: no question, straight to the camera; the text is kept on the phone.
+  let asked = false;
+  page.on("dialog", (d) => { asked = true; void d.dismiss(); });
+  let chooser = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
   await page.getByRole("button", { name: "Start over" }).click();
-  check("Start over clears", await visible(page.getByRole("button", { name: "Take a photo of the text" })));
-  await take(await cover(page, BLURB, 90));
+  let camera = await chooser;
+  check("Start over: no question asked", !asked);
+  check("…opens the camera for the next back cover", camera !== null && (await camera.element().getAttribute("aria-label")) === "Text photo");
+  check("…and the screen is clear", await visible(page.getByRole("button", { name: "Take a photo of the text" })));
+  const earlier = page.getByRole("region", { name: "Earlier texts on this phone" });
+  check("the text is kept under Earlier texts on this phone", await visible(earlier.getByRole("button", { name: "Earlier texts on this phone (1)" })));
+
+  // Sideways photo, taken with that camera.
+  await camera.setFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer: Buffer.from(await cover(page, BLURB, 90), "base64") });
   await visible(box, 180000);
   check("sideways photo read too", /konekiväärikomppaniasta/.test(await box.inputValue()), (await box.inputValue().catch(() => "")).slice(0, 120));
 
-  // A photo with no text.
-  await page.once("dialog", (d) => d.accept());
+  // Earlier texts: kept across closing the app, and one can be opened again.
+  chooser = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
   await page.getByRole("button", { name: "Start over" }).click();
+  await chooser;
+  await page.reload();
+  await earlier.getByRole("button", { name: "Earlier texts on this phone (2)" }).click();
+  const rows = earlier.getByRole("listitem");
+  check("both earlier texts listed, newest first", (await rows.count()) === 2 && /Väinö Linnan/.test(await rows.first().innerText()));
+  await rows.nth(1).getByRole("button").click();
+  check("tapping one opens it again", /Kansi: Otava\. Painettu EU-maissa/.test(await box.inputValue().catch(() => "")), (await box.inputValue().catch(() => "")).slice(-80));
+  check("…and it leaves the list while it's open", await visible(earlier.getByRole("button", { name: "Earlier texts on this phone (1)" })));
+  const kept = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("shelf-address", 1); r.onsuccess = () => { const q = r.result.transaction("kv").objectStore("kv").get("extract:history"); q.onsuccess = () => resolve(q.result); }; }));
+  check("earlier texts stored on the phone (one left; the other is open)", Array.isArray(kept) && kept.length === 1);
+  await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("shelf-address", 1); r.onsuccess = () => { const s = r.result.transaction("kv", "readwrite").objectStore("kv"); const q = s.get("extract:history"); q.onsuccess = () => { const old = q.result.map((e) => ({ ...e, updatedAt: new Date(Date.now() - 8 * 24 * 3600e3).toISOString() })); s.put(old, "extract:history").onsuccess = () => resolve(); }; }; }));
+  await page.reload();
+  await visible(box);
+  check("earlier texts dropped after 7 days", (await earlier.count()) === 0);
+
+  // A photo with no text.
+  chooser = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+  await page.getByRole("button", { name: "Start over" }).click();
+  await chooser;
   const blank = await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 1200; c.height = 900; const x = c.getContext("2d"); x.fillStyle = "#8a8a8a"; x.fillRect(0, 0, 1200, 900); return c.toDataURL("image/jpeg").split(",")[1]; });
   await take(blank);
   check("no text: explained", await visible(page.getByText(/No text found in that photo/), 120000));
   await browser.close();
-
-  // A phone browser with no share menu: the file is saved instead.
-  {
-    const b = await chromium.launch();
-    const pctx = await b.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788", acceptDownloads: true });
-    await pctx.addInitScript(() => { delete Navigator.prototype.share; delete Navigator.prototype.canShare; });
-    const p = await pctx.newPage();
-    p.on("pageerror", (e) => errors.push(String(e)));
-    await p.goto("/extract");
-    await p.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("shelf-address", 1); r.onupgradeneeded = () => r.result.createObjectStore("kv"); r.onsuccess = () => { const tx = r.result.transaction("kv", "readwrite"); tx.objectStore("kv").put("Kirjan takakansi.", "extract:text"); tx.oncomplete = () => resolve(); }; }));
-    await p.reload();
-    const download = p.waitForEvent("download", { timeout: 10000 }).catch(() => null);
-    await p.getByRole("button", { name: "Share", exact: true }).click();
-    const d = await download;
-    check("no share menu: saves the .txt file", d !== null && /^kirjan-takakansi-.*\.txt$/.test(d.suggestedFilename()), d && d.suggestedFilename());
-    await b.close();
-  }
 
   check("no page errors", errors.length === 0, errors.join(" | "));
   console.log(`${passed} passed, ${failures.length} failed`); failures.forEach((f) => console.log("FAIL: " + f));

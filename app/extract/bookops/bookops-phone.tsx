@@ -1,29 +1,89 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { CameraScanner } from "@/app/scan/_components/camera-scanner";
 import { CameraIcon, CheckIcon } from "@/components/icons";
-import { bookOps, BookOpsApiError, canvasOfFile, readBarcode, toJpeg } from "@/lib/client/bookops";
+import type { BookOpsBook } from "@/lib/bookops-model";
+import { bookOps, BookOpsApiError, readBarcode } from "@/lib/client/bookops";
 import { formatIsbn } from "@/lib/isbn";
 import { LoginForm } from "../_components/login-form";
+import { PhoneCamera, type Shot, type Side } from "./phone-camera";
 
-type Side = "front" | "back";
-type Shot = { blob: Blob; url: string; canvas: HTMLCanvasElement };
-type Sent = { id: string; text: string };
+/** How often the "Needs photos" list checks for news while it's on screen. */
+const REFRESH_MS = 4000;
+/**
+ * After a listing's photos are sent the scanner comes back on — often still
+ * pointing at that same book. Its barcode is ignored this long, so it isn't
+ * added again by accident.
+ */
+const QUIET_AFTER_PHOTOS_MS = 15_000;
+/** Event handlers only (the lint can't tell these handlers from rendering). */
+const quietUntil = () => Date.now() + QUIET_AFTER_PHOTOS_MS;
+
+/** One book sent from this phone by scanning (or by its back cover), as shown in its list. */
+type Sent = {
+  /** Made here, so sending it again can't make two books. */
+  id: string;
+  how: "scan" | "photo";
+  isbn13: string | null;
+  title: string | null;
+  author: string | null;
+  /** Other books still to do with the same ISBN, when it was sent. */
+  sameIsbn: number;
+  /** The lookup and the AI are done (with or without a title). */
+  finished: boolean;
+  state: "sending" | "sent" | "failed";
+  error?: string;
+  /** For "Send again" after a failure. */
+  retry?: { isbn?: string; back?: Blob };
+};
 
 /**
- * BookOps on a phone (docs/spec-corrections.md §27): the phone as the camera.
- * Photograph a book's front and back cover with the phone's own camera app,
- * and the book appears in BookOps on the computer within seconds — where the
- * pricing is done. Kept simple on purpose: the work happens on the computer.
+ * Photos being taken: for a listing (the sides it lacks), or a new listing
+ * from a back cover without a barcode. "taking": the camera is open;
+ * "sending"/"failed": the photos are on their way to the listing.
+ */
+type Shooting = {
+  kind: "listing" | "noBarcode";
+  /** The listing (kind "listing"). */
+  id: string | null;
+  title: string;
+  isbn13: string | null;
+  need: Side[];
+  shots: Partial<Record<Side, Shot>>;
+  state: "taking" | "sending" | "failed";
+  error?: string;
+};
+
+const SIDE_NAME: Record<Side, string> = { front: "Front cover", back: "Back cover" };
+const nameOf = (b: Pick<BookOpsBook, "title" | "isbn13">) => b.title?.trim() || (b.isbn13 ? `ISBN ${formatIsbn(b.isbn13)}` : "Untitled book");
+/** The sides a listing lacks, back cover first: that is where the barcode is, so it is already facing up after scanning. */
+const missing = (b: BookOpsBook): Side[] => [...(b.backPhoto ? [] : (["back"] as const)), ...(b.frontPhoto ? [] : (["front"] as const))];
+
+/**
+ * BookOps on a phone (docs/spec-corrections.md §30): the phone does what the
+ * computer can't, with its good camera — while the price, condition and the
+ * rest are set on the computer.
+ *
+ * - **Scan**: each barcode is a new listing in the computer's To do list; its
+ *   title arrives from the book databases within seconds.
+ * - **Photos**: every listing still lacking its front or back photo is under
+ *   "Needs photos" (scanned here, typed on the computer, or from a hand-held
+ *   reader). Tap one: BookOps' own camera opens full screen with the step on
+ *   it — back cover, then the front by itself (phone-camera.tsx); they go to
+ *   that listing, and the AI reads the back-cover text.
+ * - **No barcode**: photograph the back cover — the AI reads the printed ISBN,
+ *   and the photo is kept as the listing's back cover.
  */
 export function BookOpsPhone() {
-  const frontRef = useRef<HTMLInputElement>(null);
-  const backRef = useRef<HTMLInputElement>(null);
   const [login, setLogin] = useState<"loading" | "needed" | "ok" | "offline">("loading");
-  const [shots, setShots] = useState<Partial<Record<Side, Shot>>>({});
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<Sent[]>([]);
+  const [books, setBooks] = useState<BookOpsBook[]>([]);
+  const [shooting, setShooting] = useState<Shooting | null>(null);
+  /** Listings whose photos were just sent from here: kept off "Needs photos" until the list catches up. */
+  const [justSent, setJustSent] = useState<string[]>([]);
+  /** The ISBN of the book just photographed, ignored by the scanner until `until`. */
+  const quietRef = useRef<{ isbn: string; until: number } | null>(null);
 
   useEffect(() => {
     void fetch("/api/extract/login", { cache: "no-store" })
@@ -32,125 +92,254 @@ export function BookOpsPhone() {
       .catch(() => setLogin("offline"));
   }, []);
 
-  const send = async (front: Shot, back: Shot) => {
-    setSending(true);
-    setError(null);
+  const load = useCallback(async () => {
     try {
-      const isbn = await readBarcode(back.canvas);
-      const book = await bookOps.add({ id: crypto.randomUUID(), front: front.blob, back: back.blob, isbn, isbnSource: "barcode" });
-      // The reading is started from here; the computer picks it up if this page is left.
-      void bookOps.process(book.id).catch(() => {});
-      setSent((all) => [{ id: book.id, text: isbn ? `ISBN ${formatIsbn(isbn)}` : "no barcode found — the AI is looking for the ISBN" }, ...all]);
-      URL.revokeObjectURL(front.url);
-      URL.revokeObjectURL(back.url);
-      setShots({});
+      setBooks(await bookOps.list());
     } catch (e) {
       if (e instanceof BookOpsApiError && e.loggedOut) setLogin("needed");
-      setError(`Not sent (${e instanceof Error ? e.message.replace(/\.$/, "") : "it failed"}). The photos are still here — try again.`);
-    } finally {
-      setSending(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (login !== "ok") return;
+    const first = setTimeout(() => void load(), 0);
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, REFRESH_MS);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
+  }, [login, load]);
+
+  const update = (id: string, patch: Partial<Sent>) => setSent((all) => all.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  const fromBook = (b: BookOpsBook): Partial<Sent> => ({
+    isbn13: b.isbn13,
+    title: b.title,
+    author: b.author,
+    finished: b.lookupStatus !== "pending" && b.aiStatus !== "pending",
+  });
+
+  /** Sends one book; its title follows once the lookup (and the AI, for a photo) is done. */
+  const send = useCallback(
+    async (entry: Sent) => {
+      update(entry.id, { state: "sending", error: undefined });
+      try {
+        const { book, sameIsbn } = await bookOps.add({ id: entry.id, isbn: entry.retry?.isbn, isbnSource: "barcode", back: entry.retry?.back });
+        update(entry.id, { ...fromBook(book), sameIsbn, state: "sent", retry: undefined });
+        void load();
+        const done = await bookOps.process(book.id).catch(() => null);
+        if (done) {
+          update(entry.id, fromBook(done));
+          void load();
+        }
+      } catch (e) {
+        if (e instanceof BookOpsApiError && e.loggedOut) setLogin("needed");
+        update(entry.id, { state: "failed", error: e instanceof Error ? e.message.replace(/\.$/, "") : "it failed" });
+      }
+    },
+    [load],
+  );
+
+  const onIsbn = useCallback(
+    (isbn13: string) => {
+      const quiet = quietRef.current;
+      if (quiet && quiet.isbn === isbn13 && Date.now() < quiet.until) return;
+      const entry: Sent = { id: crypto.randomUUID(), how: "scan", isbn13, title: null, author: null, sameIsbn: 0, finished: false, state: "sending", retry: { isbn: isbn13 } };
+      setSent((all) => [entry, ...all]);
+      void send(entry);
+    },
+    [send],
+  );
+
+  /** Photos for a listing: BookOps' camera opens for the sides it lacks, back cover first. */
+  const startPhotos = (book: Pick<BookOpsBook, "id" | "title" | "isbn13">, need: Side[]) => {
+    if (!need.length) return;
+    setShooting({ kind: "listing", id: book.id, title: `Photos for: ${nameOf(book)}`, isbn13: book.isbn13, need, shots: {}, state: "taking" });
+  };
+
+  /** No barcode: the back cover's photo is the book — the AI reads its printed ISBN, and it's kept as its back cover. */
+  const startNoBarcode = () =>
+    setShooting({ kind: "noBarcode", id: null, title: "New listing — a book without a barcode", isbn13: null, need: ["back"], shots: {}, state: "taking" });
+
+  const sendPhotos = async (s: Shooting) => {
+    // The book is still in hand when the scanner comes back: its barcode is ignored a while.
+    if (s.isbn13) quietRef.current = { isbn: s.isbn13, until: quietUntil() };
+    setShooting({ ...s, state: "sending", error: undefined });
+    try {
+      const barcode = !s.isbn13 && s.shots.back ? await readBarcode(s.shots.back.canvas) : null;
+      if (s.kind === "noBarcode") {
+        const entry: Sent = { id: crypto.randomUUID(), how: "photo", isbn13: barcode, title: null, author: null, sameIsbn: 0, finished: false, state: "sending", retry: { back: s.shots.back!.blob, isbn: barcode ?? undefined } };
+        setSent((all) => [entry, ...all]);
+        void send(entry);
+      } else {
+        await bookOps.attach(s.id!, { front: s.shots.front?.blob, back: s.shots.back?.blob, isbn: barcode });
+        setJustSent((all) => [...all, s.id!]);
+        void bookOps.process(s.id!).then(() => load(), () => {});
+        void load();
+      }
+      const photographed = s.isbn13 ?? barcode;
+      if (photographed) quietRef.current = { isbn: photographed, until: quietUntil() };
+      Object.values(s.shots).forEach((x) => URL.revokeObjectURL(x.url));
+      setShooting(null);
+    } catch (e) {
+      if (e instanceof BookOpsApiError && e.loggedOut) setLogin("needed");
+      setShooting({ ...s, state: "failed", error: e instanceof Error ? e.message.replace(/\.$/, "") : "it failed" });
     }
   };
 
-  const onPhoto = async (side: Side, file: File | undefined) => {
-    if (!file) return;
-    setError(null);
-    try {
-      const canvas = await canvasOfFile(file);
-      const blob = await toJpeg(canvas);
-      const shot = { blob, url: URL.createObjectURL(blob), canvas };
-      const next = { ...shots, [side]: shot };
-      if (shots[side]) URL.revokeObjectURL(shots[side].url);
-      setShots(next);
-      // Both covers: off it goes.
-      if (next.front && next.back) await send(next.front, next.back);
-    } catch {
-      setError("Couldn't open that photo. Try again.");
-    } finally {
-      const input = side === "front" ? frontRef.current : backRef.current;
-      if (input) input.value = "";
-    }
+  const cancelPhotos = () => {
+    if (shooting) Object.values(shooting.shots).forEach((x) => URL.revokeObjectURL(x.url));
+    setShooting(null);
   };
 
   if (login === "loading") return <p className="text-muted">Loading…</p>;
-  if (login === "offline") return <p className="text-muted">No connection. BookOps needs signal to send the photos to the computer.</p>;
+  if (login === "offline") return <p className="text-muted">No connection. BookOps needs signal to send books to the computer.</p>;
   if (login === "needed") {
     return <LoginForm label="BookOps needs the access code" hint="The same code as AI reading. Asked once on this phone." onLoggedIn={() => setLogin("ok")} />;
   }
 
-  const button = "flex h-16 items-center gap-3 rounded-xl px-4 text-left text-lg font-medium disabled:opacity-40";
-  const side = (which: Side, label: string, step: string) => {
-    const shot = shots[which];
-    const next = which === "front" ? !shots.front : Boolean(shots.front) && !shots.back;
-    return (
-      <>
-        <input
-          ref={which === "front" ? frontRef : backRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          aria-label={`${label} photo`}
-          tabIndex={-1}
-          onChange={(e) => void onPhoto(which, e.target.files?.[0])}
-        />
-        <button
-          type="button"
-          disabled={sending}
-          onClick={() => (which === "front" ? frontRef : backRef).current?.click()}
-          className={`${button} ${next ? "bg-accent text-accent-contrast" : "border border-line bg-surface"}`}
-        >
-          {shot ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={shot.url} alt="" className="h-12 w-9 shrink-0 rounded object-cover" />
-          ) : (
-            <CameraIcon className="size-7 shrink-0" />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className={`block text-xs font-normal ${next ? "" : "text-muted"}`}>{step}</span>
-            {shot ? `${label} ✓ — tap to retake` : `Photograph the ${label.toLowerCase()}`}
-          </span>
-        </button>
-      </>
-    );
-  };
+  const needs = books.filter((b) => b.status === "draft" && missing(b).length > 0 && !justSent.includes(b.id));
+  const needsById = new Map(needs.map((b) => [b.id, b]));
+  const button = "flex items-center justify-center gap-2 rounded-xl font-medium disabled:opacity-40";
 
   return (
     <>
-      <p className="text-sm text-muted">
-        Photograph a book&apos;s front and back cover. It appears in BookOps on the computer by itself, where it&apos;s priced and
-        sent to the web store.
-      </p>
-      {side("front", "Front cover", "Step 1")}
-      {side("back", "Back cover", "Step 2")}
-      {sending && (
-        <p role="status" className="text-center text-sm text-muted">
-          Sending to the computer…
+      {shooting?.state === "taking" && (
+        <PhoneCamera title={shooting.title} sides={shooting.need} onDone={(shots) => void sendPhotos({ ...shooting, shots })} onCancel={cancelPhotos} />
+      )}
+
+      {shooting && shooting.state !== "taking" ? (
+        <section aria-label="Sending photos" className="flex flex-col gap-2 rounded-xl border-2 border-accent bg-surface p-3 text-sm">
+          <p className="font-semibold">{shooting.title}</p>
+          {shooting.state === "sending" ? (
+            <p role="status" className="text-muted">
+              Sending the photos…
+            </p>
+          ) : (
+            <div role="alert" className="flex flex-col gap-2 text-danger">
+              Not sent ({shooting.error}).
+              <div className="flex gap-2">
+                <button type="button" onClick={() => void sendPhotos(shooting)} className={`${button} h-11 flex-1 bg-accent text-accent-contrast`}>
+                  Send again
+                </button>
+                <button type="button" onClick={cancelPhotos} className={`${button} h-11 border border-line px-4 text-foreground`}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      ) : (
+        <p className="text-sm text-muted">
+          Scan a book&apos;s barcode to add it to the To do list on the computer, then add its photos here. The price and the rest
+          are set on the computer.
         </p>
       )}
-      {error && (
-        <div role="alert" className="flex flex-col gap-2 rounded-lg border border-danger/40 p-3 text-sm text-danger">
-          {error}
-          {shots.front && shots.back && (
-            <button type="button" onClick={() => void send(shots.front!, shots.back!)} className="h-11 rounded-lg bg-accent font-medium text-accent-contrast">
-              Send again
-            </button>
-          )}
-        </div>
-      )}
+
+      <CameraScanner disabled={Boolean(shooting)} autoStart onIsbn={onIsbn} />
+
       {sent.length > 0 && (
         <section aria-label="Sent to the computer" className="flex flex-col gap-2">
-          <h2 className="px-1 text-sm font-semibold">Sent to the computer ({sent.length})</h2>
+          <h2 className="px-1 text-sm font-semibold">Sent to the computer ({sent.filter((s) => s.state === "sent").length})</h2>
           <ul className="overflow-hidden rounded-xl border border-line bg-surface">
-            {sent.map((s) => (
-              <li key={s.id} className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-sm last:border-0">
-                <CheckIcon className="size-4 shrink-0 text-accent" />
-                <span className="min-w-0">Book sent · {s.text}</span>
-              </li>
-            ))}
+            {sent.map((s) => {
+              const lacking = needsById.get(s.id);
+              return (
+                <li key={s.id} className="flex flex-col gap-1.5 border-b border-line px-3 py-2.5 text-sm last:border-0">
+                  <span className="flex items-start gap-2">
+                    {s.state === "sent" ? (
+                      <CheckIcon className="mt-0.5 size-4 shrink-0 text-accent" />
+                    ) : (
+                      <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${s.state === "failed" ? "bg-danger" : "animate-pulse bg-accent"}`} />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium">
+                        {s.title?.trim() ||
+                          (s.state === "failed"
+                            ? "Not sent"
+                            : s.finished
+                              ? "No title found — add it on the computer"
+                              : s.how === "photo"
+                                ? "Back cover — the AI is reading the ISBN…"
+                                : "Looking up the title…")}
+                      </span>
+                      <span className="block text-xs text-muted">
+                        {s.isbn13 ? `ISBN ${formatIsbn(s.isbn13)}` : s.how === "photo" ? "Photographed back cover" : ""}
+                        {s.author ? ` · ${s.author}` : ""}
+                      </span>
+                    </span>
+                    {lacking && !shooting && (
+                      <button
+                        type="button"
+                        onClick={() => startPhotos(lacking, missing(lacking))}
+                        className="h-9 shrink-0 rounded-lg bg-accent px-3 text-sm font-medium text-accent-contrast"
+                      >
+                        Add photos now
+                      </button>
+                    )}
+                  </span>
+                  {s.state === "sent" && s.sameIsbn > 0 && (
+                    <span role="status" className="rounded-md border border-warn-line bg-warn-bg px-2 py-1 text-xs text-warn-text">
+                      Already in the queue — added another copy. Delete it on the computer if that was a double scan.
+                    </span>
+                  )}
+                  {s.state === "failed" && (
+                    <span role="alert" className="flex flex-wrap items-center gap-2 text-xs text-danger">
+                      Not sent ({s.error}).
+                      <button type="button" onClick={() => void send(s)} className="h-9 rounded-lg bg-accent px-3 text-sm font-medium text-accent-contrast">
+                        Send again
+                      </button>
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
+
+      <section aria-label="Needs photos" className="flex flex-col gap-2">
+        <h2 className="px-1 text-sm font-semibold">Needs photos ({needs.length})</h2>
+        {needs.length ? (
+          <ul className="overflow-hidden rounded-xl border border-line bg-surface">
+            {needs.map((b) => {
+              const lack = missing(b);
+              return (
+                <li key={b.id} className="border-b border-line last:border-0">
+                  <button
+                    type="button"
+                    disabled={Boolean(shooting)}
+                    onClick={() => startPhotos(b, lack)}
+                    className="flex w-full items-center gap-3 px-3 py-2.5 text-left active:bg-line/50 disabled:opacity-50"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{nameOf(b)}</span>
+                      <span className="block text-xs text-muted">{lack.length === 2 ? "Back and front cover" : `${SIDE_NAME[lack[0]]} still needed`}</span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1.5 text-sm font-medium text-accent">
+                      <CameraIcon className="size-5" />
+                      Add photos
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="rounded-xl border border-dashed border-line p-4 text-center text-sm text-muted">Every listing to do has its photos.</p>
+        )}
+      </section>
+
+      <section aria-label="No barcode" className="flex flex-col gap-2 rounded-xl border border-line bg-surface p-3">
+        <button type="button" disabled={Boolean(shooting)} onClick={startNoBarcode} className={`${button} h-12 border border-line`}>
+          <CameraIcon className="size-5" />
+          No barcode? Photograph the back cover
+        </button>
+        <p className="text-xs text-muted">
+          A new listing: the AI reads the ISBN printed on the back cover, and the photo is kept as its back cover.
+        </p>
+      </section>
     </>
   );
 }

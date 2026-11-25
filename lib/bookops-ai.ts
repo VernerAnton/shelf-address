@@ -4,7 +4,7 @@ import { tidyAiText } from "@/lib/extract-text";
 import { findIsbns } from "@/lib/isbn-text";
 
 /**
- * BookOps' AI reading (docs/spec-corrections.md §27): the photos of a book's
+ * BookOps' AI reading (docs/spec-corrections.md §30): the photos of a book's
  * front and back cover go to the same vision model Extract uses (OpenRouter,
  * same key, same spending cap), which is asked for four things at once — the
  * back-cover text, the printed ISBN, the title and the author.

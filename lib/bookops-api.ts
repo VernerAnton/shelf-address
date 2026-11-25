@@ -1,5 +1,5 @@
 import { NO_STORE } from "@/lib/api";
-import { BookOpsError } from "@/lib/bookops";
+import { BookOpsError, PHOTO_MAX_BYTES, type NewPhoto } from "@/lib/bookops";
 import { isLoggedIn } from "@/lib/extract-ai";
 
 /**
@@ -29,3 +29,10 @@ export async function bookOpsJson(request: Request): Promise<Record<string, unkn
 }
 
 export const ok = (body: unknown) => Response.json(body, { headers: NO_STORE });
+
+/** A photo from a form field, or null if there's none. */
+export async function photo(value: FormDataEntryValue | null): Promise<NewPhoto | null> {
+  if (!value || typeof value === "string") return null;
+  if (value.size > PHOTO_MAX_BYTES) throw new BookOpsError("That photo is too large.", 413);
+  return { type: value.type, bytes: await value.arrayBuffer() };
+}

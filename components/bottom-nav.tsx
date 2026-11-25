@@ -12,7 +12,7 @@ const under = (pathname: string, href: string) => pathname === href || pathname.
  * row just above them: Places, Scan, Catalog. Book pages (/copies) belong to
  * Sections too.
  *
- * Extract has a row of its own as well (§27): BookOps on the left, Text
+ * Extract has a row of its own as well (§30): BookOps on the left, Text
  * Extract on the right. The Extract tab itself still opens Text Extract, as
  * before — the camera on a phone, Saved texts on a computer.
  */

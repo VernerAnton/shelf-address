@@ -7,7 +7,8 @@ const { videoFile } = require("./videos.cjs");
 const ROOT = path.join(__dirname, "..");
 const BASE_URL = "http://127.0.0.1:8788";
 const BOOKS = "http://127.0.0.1:8790"; // the book-service stand-in (mock-books.cjs)
-const APP_VERSION = Number(/APP_VERSION = (\d+)/.exec(require("fs").readFileSync(path.join(ROOT, "lib/version.ts"), "utf8"))[1]);
+// A string: "32" or "32.1".
+const APP_VERSION = /APP_VERSION = "?([\d.]+)"?/.exec(require("fs").readFileSync(path.join(ROOT, "lib/version.ts"), "utf8"))[1];
 
 /** Pass/fail bookkeeping; `done()` prints the result line run.sh shows. */
 function suite() {

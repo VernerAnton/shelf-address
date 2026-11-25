@@ -8,7 +8,9 @@
 //
 // Also OpenRouter, for Extract's AI reading (/api/v1/chat/completions), so
 // tests never reach the real AI or spend anything:
-//   POST /__ai?mode=ok|limit|badkey|slow   how it answers next (default ok)
+//   POST /__ai?mode=ok|limit|badkey|slow|length|delay|picky   how it answers next (default ok;
+//                                          length: stops early, out of room; delay: 3 s;
+//                                          picky: refuses the reasoning setting)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
 // BookOps asks the same stand-in (x-title "Shelf-Address BookOps") and gets JSON back:
 //   POST /__ai?book=plain|isbn|badisbn|garbage   what it "reads" next (default plain:
@@ -91,6 +93,9 @@ async function chat(req, res) {
     title: req.headers["x-title"],
     model: body.model,
     temperature: body.temperature,
+    maxTokens: body.max_tokens,
+    reasoning: body.reasoning,
+    provider: body.provider,
     prompt: content.find((c) => c.type === "text")?.text ?? "",
     imageType: image.slice(5, image.indexOf(";")),
     imageBytes: jpeg.length,
@@ -105,7 +110,23 @@ async function chat(req, res) {
     const answer = aiBook === "garbage" ? "Sorry, I can't make out these photos." : "```json\n" + JSON.stringify(BOOKOPS[aiBook] ?? BOOKOPS.plain) + "\n```";
     return json(res, 200, { choices: [{ message: { role: "assistant", content: answer } }] });
   }
-  json(res, 200, { choices: [{ message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }] });
+  if (aiMode === "delay") await new Promise((r) => setTimeout(r, 3000)); // a slow but fine answer
+  if (aiMode === "picky" && body.reasoning) return json(res, 400, { error: { message: "Reasoning is mandatory / unsupported for this model" } });
+  const usage = (answer, thinking) => ({ prompt_tokens: 1290, completion_tokens: answer, completion_tokens_details: { reasoning_tokens: thinking } });
+  if (aiMode === "length") {
+    return json(res, 200, {
+      model: body.model,
+      provider: "Google AI Studio",
+      choices: [{ finish_reason: "length", message: { role: "assistant", content: AI_TEXT.split(" ").slice(0, 5).join(" ") } }],
+      usage: usage(body.max_tokens, body.max_tokens - 12),
+    });
+  }
+  json(res, 200, {
+    model: body.model,
+    provider: "Google AI Studio",
+    choices: [{ finish_reason: "stop", message: { role: "assistant", content: "```\n" + AI_TEXT + "\n```" } }],
+    usage: usage(640, 590),
+  });
 }
 
 http

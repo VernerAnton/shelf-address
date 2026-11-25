@@ -1,6 +1,6 @@
 // seed: none
-// BookOps (spec-corrections §27): the Extract tab's two options; on a computer,
-// one screen — queue, book, camera. Front and back cover photographed (Space),
+// BookOps (spec-corrections §30): the Extract tab's two options; on a computer,
+// one screen — queue, book, camera. Back and front cover photographed (Space),
 // ISBN from the barcode, title and author from the book databases, back-cover
 // text from the AI (stand-ins here), each field saying where its text came
 // from and none overwriting what was typed; price and condition by hand; four
@@ -34,15 +34,26 @@ const logIn = async (page) => {
 const t = suite();
 (async () => {
   const { check } = t;
-  const b = await browser("book"); // the camera shows a book's barcode: 9789510366868, which no stand-in database knows
+  const b = await browser("upright"); // the camera shows a book's barcode: 9789510366868, which no stand-in database knows
   const page = await phone(b, t);
   const pcCtx = await b.newContext({ baseURL: BASE_URL, viewport: { width: 1440, height: 950 }, permissions: ["camera"] });
   await pcCtx.route(/^https:\/\/www\.(antikvaari\.fi|adlibris\.com|suomalainen\.com|akateeminen\.com)\//, (r) => r.fulfill({ contentType: "text/html", body: "<title>shop stand-in</title>" }));
   const pc = await pcCtx.newPage();
   pc.setDefaultTimeout(20000);
   pc.on("pageerror", (e) => t.errors.push(String(e)));
-  const labels = (nav) => nav.getByRole("link").allInnerTexts().then((x) => x.map((s) => s.trim()).join(","));
-  const current = (nav) => nav.locator("[aria-current=page]").allInnerTexts().then((x) => x.map((s) => s.trim()).join(","));
+  // Retried: a page still settling after a navigation can drop the first read.
+  const settled = async (read) => {
+    for (let i = 0; ; i++) {
+      try {
+        return await read();
+      } catch (e) {
+        if (i >= 5) throw e;
+        await sleep(500);
+      }
+    }
+  };
+  const labels = (nav) => settled(() => nav.getByRole("link").allInnerTexts()).then((x) => x.map((s) => s.trim()).join(","));
+  const current = (nav) => settled(() => nav.locator("[aria-current=page]").allInnerTexts()).then((x) => x.map((s) => s.trim()).join(","));
 
   // The Extract tab: two options, and it still opens Text Extract.
   const main = page.getByRole("navigation", { name: "Main" });
@@ -59,8 +70,11 @@ const t = suite();
     const m = document.querySelector("nav[aria-label=Main]").getBoundingClientRect();
     return s.bottom <= m.top + 1 && m.top - s.bottom < 4 && s.height >= 44;
   }));
-  await sub.getByRole("link", { name: "BookOps" }).click();
-  await page.waitForURL(/\/extract\/bookops$/);
+  // Tapped again if the first tap is lost (it can land while the page is still starting up).
+  for (let i = 0; i < 3 && !/\/extract\/bookops$/.test(page.url()); i++) {
+    await sub.getByRole("link", { name: "BookOps" }).click();
+    await page.waitForURL(/\/extract\/bookops$/, { timeout: 10000 }).catch(() => {});
+  }
   check("phone: BookOps opens from the row, marked", await visible(page.getByRole("heading", { name: "BookOps" })) && (await current(sub)) === "BookOps" && (await current(main)) === "Extract");
   await page.goto("/extract/saved");
   check("Saved texts counts as Text Extract", (await current(sub)) === "Text Extract");
@@ -73,7 +87,8 @@ const t = suite();
   await pc.waitForURL(/\/extract\/saved$/);
   check("computer: the Extract tab still goes to Saved texts, Text Extract marked", (await current(pcSub)) === "Text Extract");
   await pcSub.getByRole("link", { name: "BookOps" }).click();
-  await pc.waitForURL(/\/extract\/bookops$/);
+  // The first visit compiles a big page; on a just-built test server that has taken over 20 s.
+  await pc.waitForURL(/\/extract\/bookops$/, { timeout: 60000 });
   check("computer: BookOps opens from the row", await visible(pc.getByRole("heading", { name: "BookOps" })) && (await current(pcSub)) === "BookOps");
 
   // Behind the access code, like Saved texts.
@@ -83,7 +98,11 @@ const t = suite();
   check("…nor a photo", (await pc.request.get("/api/extract/bookops/photos/x-front-1.jpg")).status() === 401);
   check("…nor a book added", (await pc.request.post("/api/extract/bookops/books", { multipart: { id: "12345678", isbn: "9789510230763", isbnSource: "typed" } })).status() === 401 && rows().length === 0);
   await logIn(pc);
-  const camera = pc.getByRole("region", { name: "Camera" });
+  // The computer's own camera is off unless chosen: the phone takes the photos.
+  const fromPhone = pc.getByRole("region", { name: "Photos from the phone" });
+  check("computer: the camera is off by default, photos come from the phone", await visible(fromPhone.getByText(/Taken on the phone/)) && (await pc.getByRole("region", { name: "Camera", exact: true }).count()) === 0 && (await pc.locator("video").count()) === 0);
+  await fromPhone.getByRole("button", { name: "Use the computer's camera" }).click();
+  const camera = pc.getByRole("region", { name: "Camera", exact: true });
   const queue = pc.locator("[aria-label='Queue']");
   const bookBox = pc.getByRole("region", { name: "Book", exact: true });
   const lastBook = pc.getByRole("status", { name: "Last book" });
@@ -91,6 +110,23 @@ const t = suite();
   const step = () => camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " ").trim());
   check("logged in: empty queue explained", await visible(queue.getByText(/Nothing in the queue/)));
   check("the camera starts by itself", await visible(camera.getByText("LIVE")));
+
+  // Stop camera: off, stays off on the next visit, until started again.
+  const cameraOn = () => pc.evaluate(() => Boolean(document.querySelector("video[aria-label='Camera picture']")?.srcObject?.getVideoTracks().some((tr) => tr.readyState === "live")));
+  check("camera is running", await cameraOn());
+  await camera.getByRole("button", { name: "Stop camera" }).click();
+  check("Stop camera: off, the camera let go", await visible(camera.getByRole("status", { name: "Camera off" }).getByText("The camera is off.")) && !(await cameraOn()) && (await camera.getByText("LIVE").count()) === 0);
+  check("…Take picture can't be pressed, no Stop button", await camera.getByRole("button", { name: /Take picture/ }).isDisabled() && (await camera.getByRole("button", { name: "Stop camera" }).count()) === 0);
+  await pc.getByRole("heading", { name: "BookOps" }).click();
+  await pc.keyboard.press("Space");
+  await sleep(600);
+  check("…Space takes nothing", /Step 1 Back cover/.test(await camera.locator("[aria-current=step]").innerText().then((s) => s.replace(/\s+/g, " "))));
+  await pc.reload();
+  check("stopped stays stopped when BookOps is opened again", await visible(camera.getByRole("button", { name: "Start camera" })) && !(await cameraOn()));
+  await camera.getByRole("button", { name: "Start camera" }).click();
+  check("Start camera: live again", await visible(camera.getByText("LIVE")) && await cameraOn() && await visible(camera.getByRole("button", { name: "Stop camera" })));
+  await pc.reload();
+  check("…and starts by itself again on the next visit", await visible(camera.getByText("LIVE")));
   check("three columns: queue, book, camera", await pc.evaluate(() => {
     const q = document.querySelector("[aria-label=Queue]").getBoundingClientRect();
     const c = document.querySelector("section[aria-label=Camera]").getBoundingClientRect();
@@ -98,21 +134,39 @@ const t = suite();
   }));
   check("says the web store connection is a test", await visible(pc.getByText(/test connection to the web store/)));
 
+  // The view: upright (book-shaped) by default; zoom, turn and whole picture, remembered on this computer.
+  const viewSize = () => camera.getByRole("img", { name: "Camera view" }).or(camera.locator("canvas[aria-label='Camera view']")).first().evaluate((c) => [c.width, c.height]);
+  const settings = camera.getByRole("group", { name: "Camera view settings" });
+  check("the view is upright, 3:4", await until(async () => { const [w, h] = await viewSize(); return w > 0 && Math.abs(w / h - 0.75) < 0.01; }), JSON.stringify(await viewSize()));
+  const [w1] = await viewSize();
+  await settings.getByRole("button", { name: "Zoom in" }).click();
+  check("zoom in: 1,25×, a smaller part of the picture", (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1,25×" && await until(async () => (await viewSize())[0] < w1));
+  await settings.getByRole("button", { name: "Whole picture" }).click();
+  check("whole picture: not cut to a book shape", await until(async () => { const [w, h] = await viewSize(); return Math.abs(w / h - 4 / 3) < 0.01; }));
+  await settings.getByRole("button", { name: /^Turn/ }).click();
+  check("turn: 90°, the picture turned on its side", /90°/.test(await settings.getByRole("button", { name: /^Turn/ }).innerText()) && await until(async () => { const [w, h] = await viewSize(); return Math.abs(w / h - 3 / 4) < 0.01; }));
+  await pc.reload();
+  check("the view is remembered on this computer", await visible(camera.getByText("LIVE")) && (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1,25×" && /90°/.test(await settings.getByRole("button", { name: /^Turn/ }).innerText()) && await visible(settings.getByRole("button", { name: "Book-shaped" })));
+  await settings.getByRole("button", { name: "Book-shaped" }).click();
+  await settings.getByRole("button", { name: "Zoom out" }).click();
+  for (let i = 0; i < 3; i++) await settings.getByRole("button", { name: /^Turn/ }).click();
+  check("…and back to upright, 1×, not turned", (await settings.getByLabel("Zoom", { exact: true }).innerText()) === "1×" && (await settings.getByRole("button", { name: /^Turn/ }).innerText()).trim() === "Turn ↻" && await until(async () => (await viewSize())[0] === w1));
+
   // Space takes the picture — but not while typing.
   const isbnBox = pc.getByRole("form", { name: "Add by ISBN" }).getByLabel("ISBN");
   await isbnBox.click();
   await pc.keyboard.press("Space");
   await sleep(700);
-  check("Space while typing takes no picture", /Step 1 Front cover/.test(await step()) && (await isbnBox.inputValue()) === " ", await step());
+  check("Space while typing takes no picture", /Step 1 Back cover/.test(await step()) && (await isbnBox.inputValue()) === " ", await step());
   await isbnBox.fill("");
   await pc.getByRole("heading", { name: "BookOps" }).click();
   await pc.keyboard.press("Space");
-  check("Space: front cover taken, now the back", await until(async () => /Step 2 Back cover/.test(await step())), await step());
-  check("…the front can be retaken", await visible(camera.getByRole("button", { name: "Retake the front" })));
+  check("Space: back cover first (the barcode side), now the front", await until(async () => /Step 2 Front cover/.test(await step())), await step());
+  check("…the photos can be retaken", await visible(camera.getByRole("button", { name: "Retake" })));
   check("nothing stored yet", rows().length === 0);
   await pc.keyboard.press("Space");
   check("Space again: the book is added, ISBN from the barcode", await visible(lastBook.getByText(/Added to the queue\. ISBN 978-951036686-8 read from the barcode/), 30000));
-  check("the camera is ready for the next book at once", /Step 1 Front cover/.test(await step()));
+  check("the camera is ready for the next book at once", /Step 1 Back cover/.test(await step()));
   let book = await until(() => { const r = rows()[0]; return r && r.ai_status !== "pending" && r.lookup_status !== "pending" ? r : null; });
   check("stored: ISBN from the barcode, both photos", book && book.isbn13 === "9789510366868" && book.isbn_source === "barcode" && /^bookops\/.+-front-\d+\.jpg$/.test(book.front_photo) && /^bookops\/.+-back-\d+\.jpg$/.test(book.back_photo), JSON.stringify(book));
   const asked = (await ai()).requests.at(-1);
@@ -126,6 +180,20 @@ const t = suite();
   check("queue: To price, and Check", await visible(queue.getByRole("button", { name: /To price.*Check.*Tuntematon sotilas/s })));
   const photos = pc.getByRole("region", { name: "Photos of this book" });
   check("both photos shown", await until(() => photos.locator("img").evaluateAll((imgs) => imgs.length === 2 && imgs.every((i) => i.complete && i.naturalWidth > 0))));
+  check("…saved book-shaped (upright 3:4), as the camera view showed them", await photos.locator("img").evaluateAll((imgs) => imgs.every((i) => Math.abs(i.naturalWidth / i.naturalHeight - 0.75) < 0.01)), await photos.locator("img").evaluateAll((imgs) => imgs.map((i) => `${i.naturalWidth}x${i.naturalHeight}`).join(",")));
+  // A photo shown large, and closed again: ✕, Esc, or a click beside it.
+  const viewer = pc.getByRole("dialog");
+  await photos.getByRole("button", { name: /Show larger: Front cover/ }).click();
+  check("photo: shown large over the page", await visible(viewer.getByRole("img")) && pc.url().endsWith("/extract/bookops"));
+  await pc.keyboard.press("Escape");
+  check("…Esc closes it", await gone(viewer, 5000));
+  await photos.getByRole("button", { name: /Show larger: Back cover/ }).click();
+  await visible(viewer.getByRole("img"));
+  await pc.mouse.click(5, 5);
+  check("…a click beside the photo closes it", await gone(viewer, 5000));
+  await photos.getByRole("button", { name: /Show larger: Front cover/ }).click();
+  await viewer.getByRole("button", { name: "Close" }).click();
+  check("…and so does Close", await gone(viewer, 5000));
   check("no price suggested", (await bookBox.getByLabel("Price €").inputValue()) === "" && book.price_cents === null);
 
   // The price check: four links, the ISBN filled in.
@@ -205,6 +273,22 @@ const t = suite();
   book = rows().find((r) => r.isbn13 === "9789510230763");
   check("…stored: typed ISBN, found, no photos, nothing for the AI", book && book.isbn_source === "typed" && book.lookup_status === "found" && book.title_source === "finna" && book.front_photo === null && book.ai_status === "none", JSON.stringify(book));
 
+  // The open book has no photos: the camera's pictures go to it.
+  const cameraTitle = () => camera.getByRole("heading").innerText().then((x) => x.replace(/\s+/g, " ").trim());
+  check("camera: photos for the open book (no photos yet)", (await cameraTitle()) === "PHOTOS FOR: Pääkallokehrääjä" || /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()), await cameraTitle());
+  check("…both sides needed", (await camera.getByRole("list", { name: "Pictures of this book" }).getByRole("listitem").count()) === 2);
+  await camera.getByRole("button", { name: "New book instead" }).click();
+  check("'New book instead': the camera makes a new book", /new book/i.test(await cameraTitle()) && await visible(camera.getByRole("button", { name: /^Photos for: Pääkallokehrääjä/ })));
+  await camera.getByRole("button", { name: /^Photos for: Pääkallokehrääjä/ }).click();
+  check("…and back to the open book", /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()));
+  const beforeAttach = rows().length;
+  await camera.getByLabel("Photo files").setInputFiles([await cover(pc, ["Pääkallokehrääjä"], "#7a2e22"), await cover(pc, ["Jännitysromaani."], "#efe6d2")]);
+  check("photos added to the open book, not a new one", await visible(lastBook.getByText(/Photos added to Pääkallokehrääjä/), 30000) && rows().length === beforeAttach);
+  book = await until(() => { const r = rows().find((x) => x.isbn13 === "9789510230763"); return r && r.ai_status === "done" ? r : null; });
+  check("…stored on it, and the AI read it: text filled in, the database's title kept", book && book.front_photo && book.back_photo && book.description === AI_TEXT && book.description_source === "ai" && book.title === "Pääkallokehrääjä" && book.title_source === "finna", JSON.stringify(book));
+  check("…the camera is back to new books", await until(async () => /new book/i.test(await cameraTitle())));
+  check("…and the book shows both photos", await until(() => photos.locator("img").count().then((n) => n === 2)));
+
   // Photo files instead of the camera; no barcode, and the AI misreads the ISBN.
   await ai("book=badisbn");
   await camera.getByLabel("Photo files").setInputFiles([await cover(pc, ["Kotimaan linnut"], "#3d5a40"), await cover(pc, ["Lintukirja kaikille."], "#efe6d2")]);
@@ -217,26 +301,133 @@ const t = suite();
   check("an ISBN typed on the book is looked up: the database's title replaces the AI's", await until(async () => (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === "Pääkallokehrääjä"));
   book = rows().at(-1);
   check("…stored", book.isbn13 === "9789510230763" && book.isbn_source === "you" && book.title_source === "finna" && book.lookup_status === "found");
+  check("two books with the same ISBN: both tagged in the queue", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n === 2)));
+  const same = bookBox.getByRole("status", { name: "Same ISBN" });
+  check("…and the open one says so, with a way to the other", await visible(same.getByText(/Another copy of this book is in the queue/)));
+  const thisId = book.id;
+  await same.getByRole("button", { name: "Open the other" }).click();
+  check("…which opens it", await until(async () => (await bookBox.getByLabel("Publisher").inputValue()) === "WSOY") && (await queue.locator("[aria-current=true]").count()) === 1 && rows().find((r) => r.id === thisId));
 
-  // A phone as the camera: the book appears on the computer by itself.
-  await ai("book=isbn");
+  // The phone is the hand-held scanner: each barcode is a new book on the computer.
   await page.goto("/extract/bookops");
   check("phone: asks for the access code", await visible(page.getByRole("form", { name: "AI reading login" }).getByText("BookOps needs the access code")));
-  await logIn(page);
-  check("phone: no camera column, two photo buttons", await visible(page.getByRole("button", { name: /Photograph the front cover/ })) && (await page.getByRole("region", { name: "Camera" }).count()) === 0);
   const before = rows().length;
   const openTitle = await bookBox.getByLabel("Title", { exact: true }).inputValue();
-  await page.getByLabel("Front cover photo").setInputFiles(await cover(page, ["Pääkallokehrääjä"], "#7a2e22"));
-  check("phone: front taken, nothing sent yet", await visible(page.getByRole("button", { name: /Front cover ✓/ })) && rows().length === before);
-  await page.getByLabel("Back cover photo").setInputFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
-  check("phone: both taken — sent by itself", await visible(page.getByRole("region", { name: "Sent to the computer" }).getByText(/Book sent/), 30000) && await visible(page.getByRole("button", { name: /Photograph the front cover/ })));
-  book = await until(() => { const r = rows().at(-1); return rows().length === before + 1 && r.ai_status === "done" && r.lookup_status !== "pending" ? r : null; });
-  check("the AI read the printed ISBN (10 digits, made 13), and the database knew it", book && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.lookup_status === "found", JSON.stringify(book));
-  check("…so the database's title replaced the AI's", book && book.title === "Pääkallokehrääjä" && book.title_source === "finna" && book.description_source === "ai");
-  check("computer: the phone's book appears without reloading", await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 1})` }), 15000));
+  await logIn(page);
+  check("phone: a live barcode scanner, no desktop camera column", await visible(page.getByRole("region", { name: "Camera scanner" })) && (await page.getByRole("region", { name: "Camera", exact: true }).count()) === 0);
+  const phoneList = page.getByRole("region", { name: "Sent to the computer" });
+  check("phone: the barcode in view is sent by itself", await visible(phoneList.getByText(/ISBN 978-951036686-8/), 30000));
+  check("…already in the queue: says another copy was added", await visible(phoneList.getByText(/Already in the queue — added another copy/), 15000));
+  check("…no database knows it: says so", await visible(phoneList.getByText("No title found — add it on the computer"), 20000));
+  await sleep(3000);
+  const scanned = rows().filter((r) => r.isbn13 === "9789510366868");
+  check("one book per scan, not one per camera frame", rows().length === before + 1 && scanned.length === 2, JSON.stringify(scanned.map((r) => r.id)));
+  const fresh = scanned.find((r) => !r.front_photo);
+  check("…stored: ISBN from the barcode, no photos, nothing for the AI", fresh && fresh.isbn_source === "barcode" && fresh.back_photo === null && fresh.ai_status === "none" && fresh.lookup_status === "not_found", JSON.stringify(fresh));
+  check("computer: the scanned book appears without reloading", await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 1})` }), 15000));
   check("…without taking the open book away", (await bookBox.getByLabel("Title", { exact: true }).inputValue()) === openTitle);
+  check("…tagged as the same ISBN as the other copy", await until(() => queue.getByText("Same ISBN · 2 in queue").count().then((n) => n >= 2)));
+
+  // Photos on the phone: the scanned listing is under "Needs photos"; BookOps' own camera, back then front.
+  const needsPhotos = page.getByRole("region", { name: "Needs photos" });
+  check("phone: right after a scan, 'Add photos now'", await visible(phoneList.getByRole("button", { name: "Add photos now" }), 15000));
+  const needRow = needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8.*Back and front cover/s });
+  check("phone: the scanned listing is under Needs photos, back and front", await visible(needRow, 15000));
+  await needRow.click();
+  const taking = page.getByRole("region", { name: "Taking photos" });
+  const stepText = () => taking.getByRole("status", { name: "Step" }).evaluate((el) => [...el.children].map((c) => c.textContent.trim()).join(" "));
+  const shutter = taking.getByRole("button", { name: "Take picture" });
+  check("tap: BookOps' camera, full screen, for that listing", await visible(taking.getByText(/Photos for: ISBN 978-951036686-8/)) && await taking.evaluate((el) => { const r = el.getBoundingClientRect(); return r.top === 0 && r.height === innerHeight; }));
+  check("…step 1 of 2 on screen: back cover, the barcode side", (await stepText()) === "1 of 2 Back cover The side with the barcode · fill the frame with the book", await stepText());
+  check("…the scanner paused", await visible(page.getByRole("button", { name: "Scan with camera" })));
+  check("…the camera live, the shutter ready", await until(() => shutter.isEnabled()));
+  // The dotted frame's shape: the saved photos must have it (what's inside the frame is what's saved).
+  const frameAspect = await taking.evaluate((el) => { const r = el.querySelector(".border-dashed").getBoundingClientRect(); return r.width / r.height; });
+  await shutter.click();
+  check("shutter: back taken, on to the front by itself", await until(async () => (await stepText()) === "2 of 2 Turn the book over: front cover This is the listing's picture · fill the frame with the book") && await visible(taking.getByRole("img", { name: "Back cover taken" })) && !rows().find((r) => r.id === fresh.id).back_photo, await stepText());
+  await taking.getByRole("button", { name: "Retake" }).click();
+  check("Retake: back to the back cover", (await stepText()) === "1 of 2 Back cover The side with the barcode · fill the frame with the book" && (await taking.getByRole("img", { name: "Back cover taken" }).count()) === 0);
+  await shutter.click();
+  await until(async () => /^2 of 2/.test(await stepText()));
+  await ai("book=plain");
+  await shutter.click();
+  check("front taken: the camera closes, both sent to the listing, the scanner back on", await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.front_photo && r.back_photo; }) && await gone(taking, 10000) && await visible(page.getByRole("region", { name: "Camera scanner" }).getByText(/Point at the barcode/), 15000));
+  book = await until(() => { const r = rows().find((x) => x.id === fresh.id); return r.ai_status === "done" ? r : null; });
+  check("…the AI read them: text filled in, its title too (no database knew it)", book && book.description === AI_TEXT && book.title === "Tuntematon sotilas" && book.title_source === "ai" && rows().length === before + 1, JSON.stringify(book));
+  await sleep(4000);
+  check("…the scanner, back on and still seeing that book, doesn't add it again", rows().length === before + 1, String(rows().length - before));
+  check("…and it's off the Needs photos list", await until(async () => (await needsPhotos.getByRole("button", { name: /ISBN 978-951036686-8/ }).count()) === 0));
+  await pc.getByRole("region", { name: "To do" }).getByRole("button", { name: /Tuntematon sotilas/ }).first().click();
+  check("computer: the phone's photos and text show on the listing", await until(async () => (await bookBox.getByLabel("Description").inputValue()) === AI_TEXT) && await until(() => photos.locator("img").count().then((n) => n === 2)));
+  const shapes = await until(() => photos.locator("img").evaluateAll((imgs) => (imgs.every((i) => i.complete && i.naturalWidth) ? imgs.map((i) => i.naturalWidth / i.naturalHeight) : null)));
+  check("…cut to the dotted frame: the photos have its shape", shapes && shapes.every((a) => Math.abs(a - frameAspect) < 0.03), JSON.stringify({ shapes, frameAspect }));
+
+  // No barcode: the back cover photographed on the phone is the book, and its back cover.
+  await ai("book=isbn");
+  await page.getByRole("button", { name: "No barcode? Photograph the back cover" }).click();
+  check("no barcode: the camera for one photo, the back cover", await visible(taking.getByText("New listing — a book without a barcode")) && /^Photo Back cover/.test(await stepText()));
+  // The phone's camera app instead: one tap away, its photo counts as the step.
+  const chooser = page.waitForEvent("filechooser");
+  await taking.getByRole("button", { name: /Use the phone's camera app instead/ }).click();
+  await (await chooser).setFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
+  check("…the camera app's photo is used, and the camera closes", await gone(taking, 15000));
+  check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 30000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/)));
+  book = await until(() => { const r = rows().at(-1); return rows().length === before + 2 && r.ai_status === "done" && r.lookup_status === "found" ? r : null; });
+  check("phone: that listing is under Needs photos, front still needed", await visible(page.getByRole("region", { name: "Needs photos" }).getByRole("button", { name: /Pääkallokehrääjä.*Front cover still needed/s }), 15000));
+  check("…stored: the photo as the back cover, ISBN read by the AI (10 digits, made 13), title from the database", book && book.back_photo && !book.front_photo && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.title_source === "finna" && book.description_source === "ai", JSON.stringify(book));
+  await visible(pc.getByRole("region", { name: "To do" }).getByRole("heading", { name: `To do (${before + 2})` }), 15000);
   await pc.getByRole("region", { name: "To do" }).getByRole("button").first().click();
-  check("…its ISBN marked as read by the AI", await visible(bookBox.getByText(/ISBN 978-951023076-3/)) && await visible(bookBox.getByText("AI read it · check")));
+  check("computer: opened, its ISBN marked as read by the AI", await visible(bookBox.getByText(/ISBN 978-951023076-3/)) && await visible(bookBox.getByText("AI read it · check")));
+  check("…the camera asks only for the front cover", /Photos for: Pääkallokehrääjä/i.test(await cameraTitle()) && (await camera.getByRole("list", { name: "Pictures of this book" }).getByRole("listitem").allInnerTexts()).join("|").replace(/\s+/g, " ").trim() === "Still needed Front cover");
+  const backKey = book.back_photo;
+  await pc.getByRole("heading", { name: "BookOps" }).click();
+  await pc.keyboard.press("Space");
+  check("one picture: the front added to that book", await until(() => { const r = rows().find((x) => x.id === book.id); return r.front_photo && r.back_photo === backKey; }) && rows().length === before + 2);
+  check("…the camera is back to new books", await until(async () => /new book/i.test(await cameraTitle())));
+
+  // Stops by itself after 10 minutes without a picture.
+  const idle = await pcCtx.newPage();
+  await idle.clock.install();
+  await idle.goto("/extract/bookops");
+  const idleCamera = idle.getByRole("region", { name: "Camera", exact: true });
+  await visible(idleCamera.getByText("LIVE"));
+  await idle.clock.fastForward("09:00");
+  check("still live after 9 minutes", await visible(idleCamera.getByText("LIVE"), 3000));
+  await idle.clock.fastForward("01:30");
+  check("off by itself after 10 minutes without a picture, and says so", await visible(idleCamera.getByRole("status", { name: "Camera off" }).getByText(/stopped by itself after 10 minutes without a picture/)));
+  await idle.close();
+
+  // Focus: this fake camera can't be focused by the browser — said so.
+  check("a camera without browser focus control: says it keeps its own autofocus", await visible(camera.getByRole("group", { name: "Focus" }).getByText(/doesn't let the browser set its focus/)));
+  // A webcam that can (simulated: what Chrome reports for one), with its autofocus landed at 0.3.
+  const fpage = await pcCtx.newPage();
+  await fpage.addInitScript(() => {
+    window.__focus = [];
+    const P = MediaStreamTrack.prototype;
+    const caps = P.getCapabilities, settings = P.getSettings, apply = P.applyConstraints;
+    let now = { focusMode: "continuous", focusDistance: 0.3 };
+    P.getCapabilities = function () { return { ...caps.call(this), focusMode: ["manual", "single-shot", "continuous"], focusDistance: { min: 0.1, max: 2, step: 0.05 } }; };
+    P.getSettings = function () { return { ...settings.call(this), ...now }; };
+    P.applyConstraints = async function (c) {
+      const a = (c && c.advanced && c.advanced[0]) || {};
+      if ("focusMode" in a) { window.__focus.push(a); now = { ...now, ...a }; return; }
+      return apply.call(this, c);
+    };
+  });
+  await fpage.goto("/extract/bookops");
+  const fcam = fpage.getByRole("region", { name: "Camera", exact: true });
+  const focusGroup = fcam.getByRole("group", { name: "Focus" });
+  const applied = () => fpage.evaluate(() => window.__focus);
+  check("focus: Auto and Fixed offered, Auto to start", await visible(focusGroup.getByRole("button", { name: "Fixed" })) && (await focusGroup.getByRole("button", { name: "Auto" }).getAttribute("aria-pressed")) === "true");
+  await focusGroup.getByRole("button", { name: "Fixed" }).click();
+  check("Fixed: the focus stays where autofocus landed", await until(async () => JSON.stringify((await applied()).at(-1)) === JSON.stringify({ focusMode: "manual", focusDistance: 0.3 })), JSON.stringify(await applied()));
+  await focusGroup.getByLabel("Focus distance").fill("0.5");
+  check("…adjustable: nearer or farther", await until(async () => (await applied()).at(-1).focusDistance === 0.5));
+  await fpage.reload();
+  check("…remembered for this camera: fixed again when the camera starts", await visible(fcam.getByText("LIVE")) && await until(async () => JSON.stringify((await applied())[0]) === JSON.stringify({ focusMode: "manual", focusDistance: 0.5 })) && (await focusGroup.getByLabel("Focus distance").inputValue()) === "0.5");
+  await focusGroup.getByRole("button", { name: "Auto" }).click();
+  check("Auto: the camera's own autofocus again", await until(async () => (await applied()).at(-1).focusMode === "continuous") && (await focusGroup.getByLabel("Focus distance").count()) === 0);
+  await fpage.close();
 
   // The rest of the app is as it was.
   check("no other table touched", sql("SELECT (SELECT COUNT(*) FROM editions) + (SELECT COUNT(*) FROM copies) + (SELECT COUNT(*) FROM saved_texts) AS n")[0].n === 0);

@@ -24,6 +24,12 @@ const t = suite();
   const page = await phone(b, t);
   const box = page.getByLabel(/Text — check and correct it/);
   const login = page.getByRole("form", { name: "AI reading login" });
+  // Start over goes straight to the camera (V28): the camera is let go unused here.
+  const startOver = async () => {
+    const camera = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+    await page.getByRole("button", { name: "Start over" }).click();
+    return camera;
+  };
   const take = async (buffer) => page.getByLabel("Text photo").setInputFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer });
 
   // Not logged in: the rest of the app asks for nothing.
@@ -43,8 +49,7 @@ const t = suite();
   await take(await cover(page, PHONE_TEXT));
   check("not logged in: the phone reads it", /Kotimainen romaani/.test(await box.inputValue().catch(() => "")) || await visible(box, 120000) && /Kotimainen/.test(await box.inputValue()));
   check("…AI not asked", (await ai()).requests.length === 0);
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
 
   // Wrong code, then the right one.
   await login.getByLabel(/needs the access code/).fill("wrong");
@@ -67,6 +72,53 @@ const t = suite();
   check("asked Gemini 3.8 Flash on OpenRouter, with the key from the server", req.model === "google/gemini-3.8-flash" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
   check("photo made smaller before sending (≤ 2000 px, JPEG)", req.imageType === "image/jpeg" && Math.max(req.width, req.height) === 2000 && req.imageBytes < 1500000, JSON.stringify({ w: req.width, h: req.height, bytes: req.imageBytes }));
   check("told to copy exactly, keep ä/ö/å, skip stickers and barcodes", /exactly, word for word/.test(req.prompt) && /ä, ö, å/.test(req.prompt) && /price stickers, barcodes/.test(req.prompt));
+  check("room for a long answer (20,000 tokens)", req.maxTokens === 20000, String(req.maxTokens));
+  check("thinking kept to a minimum (V32)", req.reasoning && req.reasoning.effort === "minimal", JSON.stringify(req.reasoning));
+  check("…and the fastest-answering provider asked for", req.provider && req.provider.sort === "latency", JSON.stringify(req.provider));
+
+  // Start over sits at the top, right under the photo button (V26).
+  const another = page.getByRole("button", { name: "Add another photo" });
+  const startOverButton = page.getByRole("button", { name: "Start over" });
+  const [ya, ys, yt] = await Promise.all([another, startOverButton, box].map((l) => l.boundingBox().then((r) => r && r.y)));
+  check("Start over right under Add another photo, above the text", ya < ys && ys < yt && (await startOverButton.count()) === 1, JSON.stringify([ya, ys, yt]));
+
+  // Report a reading (V26): the note is optional.
+  const reportArea = page.getByRole("region", { name: "Report a problem" });
+  await reportArea.getByRole("button", { name: "Report a problem" }).click();
+  check("report form: note marked optional", await visible(reportArea.getByText("(optional)")));
+  await reportArea.getByRole("button", { name: "Send report" }).click();
+  check("report sent without a note", await visible(reportArea.getByText(/✓ Reported/), 15000));
+
+  // The AI runs out of room: says the end may be missing, and the report shows why.
+  await ai("length");
+  await take(await cover(page, PHONE_TEXT));
+  check("AI stopped early: warned the end may be missing", await visible(page.getByText(/The AI stopped early — the end of the text may be missing/), 30000));
+  check("…and the Report button is back for the new photo", await visible(reportArea.getByRole("button", { name: "Report a problem" })));
+  await reportArea.getByRole("button", { name: "Report a problem" }).click();
+  await reportArea.getByLabel(/What went wrong/).fill("cut off after the first sentence");
+  await reportArea.getByRole("button", { name: "Send report" }).click();
+  check("report with a note sent", await visible(reportArea.getByText(/✓ Reported/), 15000));
+  await ai("ok");
+
+  const logPage = await b.newPage();
+  let reported = [];
+  for (let i = 0; i < 20 && reported.length < 2; i++) {
+    await logPage.goto(new URL("/photo-log", page.url()).href);
+    reported = await logPage.getByRole("listitem").filter({ hasText: "Extract: reported problem" }).all();
+    if (reported.length < 2) await sleep(500);
+  }
+  check("both reports in the Photo log", reported.length === 2, String(reported.length));
+  const newest = reported[0];
+  check("…the note shown", await visible(newest.getByText("Reported: cut off after the first sentence")));
+  check("…with the photo", (await newest.getByRole("img", { name: "Photo" }).count()) === 1);
+  await newest.locator("summary").click();
+  const detail = await newest.locator("pre").innerText();
+  check("…why it stopped, the tokens and the reply", /Stopped because: length — ran out of room/.test(detail) && /answer 20,000 of at most 20,000 \(thinking 19,988\)/.test(detail) && /Väinö Linnan romaani kertoo suomalaisesta/.test(detail), detail);
+  const older = await reported[1].locator("pre").evaluate((el) => el.textContent);
+  check("…and who served it, with how much thinking was allowed", /served by Google AI Studio, thinking: minimal/.test(detail), detail);
+  check("first report: no note, finished normally", /Note: \(none\)/.test(older) && /Stopped because: stop\n/.test(older), older);
+  check("summary counts the reports", await visible(logPage.getByLabel("Summary").getByText(/2 reported from Extract/)));
+  await logPage.close();
 
   // Stays logged in, and each visit renews the login (browsers keep cookies 400 days at most).
   const firstExpiry = cookie.expires;
@@ -77,10 +129,18 @@ const t = suite();
   const renewed = (await page.context().cookies()).find((c) => c.name === "extract_login");
   check("…and the login renewed by the visit", renewed && renewed.expires > firstExpiry + 1, JSON.stringify([firstExpiry, renewed && renewed.expires]));
 
+  // A model that refuses the speed settings (V32): asked again plainly, still read by AI.
+  await ai("picky");
+  await startOver();
+  await take(await cover(page, PHONE_TEXT));
+  check("speed settings refused: read by AI all the same", await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 }).then(() => true, () => false) && (await page.getByText(/so the phone did/).count()) === 0);
+  const tries = (await ai()).requests.slice(-2);
+  check("…the second try without them", tries.length === 2 && tries[0].reasoning && !tries[1].reasoning && !tries[1].provider, JSON.stringify(tries.map((r) => [r.reasoning, r.provider])));
+  await ai("ok");
+
   // The spending limit reached: the phone reads it instead, and says why.
   await ai("limit");
-  await page.once("dialog", (d) => d.accept());
-  await page.getByRole("button", { name: "Start over" }).click();
+  await startOver();
   await take(await cover(page, PHONE_TEXT));
   check("limit used up: the phone reads it instead", await visible(page.getByText(/The AI couldn't read it \(The AI's spending limit is used up for now\), so the phone did/), 120000));
   check("…with the phone's text", /Kotimainen/.test(await box.inputValue()));

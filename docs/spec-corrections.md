@@ -533,7 +533,7 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   Refreshes every 5 s while on screen, so a text read on a phone appears
   within seconds. On a big screen the list and the text sit side by side; on
   a phone, the list, and a tap opens one.
-- Texts are deleted 30 days after their last change.
+- Texts are deleted 7 days after their last change (30 until V27).
 
 ## 25. A computer opens on Saved texts.
 
@@ -564,7 +564,111 @@ printed ISBN worked a couple of times and then failed ten times in a row.
   migration 0011), and the phone says "corrected on the computer, so changes
   here aren't saved". A text can't be emptied here — Delete is for that.
 
-## 27. BookOps: photograph a book, price it while it's filled in.
+## 27. Extract: Start over at the top; cut-off readings caught and reportable.
+
+**Adds to:** §23, §21. A clear back cover came back from the AI cut off
+part-way, with no sign anything was wrong.
+
+- The AI's answer was capped at 2,000 tokens. The model's thinking counts
+  against that cap too, and Finnish takes many tokens per word, so a long
+  cover could run out of room. The cap is now 20,000 (cheap at Gemini Flash
+  prices).
+- The server now passes on why the model stopped (`finish_reason`), its
+  token counts and how long it took. If it stopped for lack of room
+  (`length`), the phone says "The AI stopped early — the end of the text may
+  be missing. Take another photo of the rest."
+- **Start over** sits at the top, right under "Add another photo" (only once
+  there's text); the one at the bottom is gone.
+- **Report a problem:** the phone keeps the last photo (as sent to the AI)
+  and exactly what came back, until Start over, even if the app is closed.
+  "Text wrong or cut off? Report the last photo" sends them, with an
+  optional note, to the Photo log (§21) — even where the log is switched off
+  on that phone, since it's a choice. In the log it shows as "Extract:
+  reported problem", with the note, the photo, why the AI stopped, the
+  tokens used and the reply. Reports use the existing table (outcome
+  `error`, screen `/extract`): no database change.
+
+## 28. Extract reworked: red Report, Start over to the camera, front cover to the computer.
+
+**Adds to:** §22–§27. Asked for by the shop owner after using it daily.
+
+**Phone (Extract):**
+- **Share and Copy are gone** (Saved texts does that job), with the OneDrive
+  line under them. In their place a **big red "Report a problem"** button
+  (the §27 report: last photo, what came back, the text now, optional note).
+- **Start over** asks nothing and opens the camera straight away for the next
+  book. Nothing is lost: the text is in Saved texts (logged-in phones) and
+  on the phone itself (below).
+- **"Take a photo of the front cover"** appears once the back text is read
+  (logged-in phones only: it's for the computer). Made 1600 px on its long
+  side and sent with that text; without signal it waits, after the text. A
+  line confirms "✓ Front cover saved for the computer". No preview or retake
+  button — the phone's camera already offers a retake; taking it again
+  replaces it.
+- **Earlier texts on this phone:** every text the phone read is kept on the
+  phone for 7 days (kv `extract:history`), so Start over never loses one —
+  also on a phone that isn't logged in. Tap one to open it again.
+
+**Computer (Saved texts):**
+- The front cover shows **large beside the text**, as tall as the text box,
+  the whole picture (not cropped); click for full size (Esc closes).
+  **Copy picture** (as PNG, to paste with Ctrl+V into a listing) and
+  **Download picture** under it; the picture can also be dragged. A small
+  one in the list tells the books apart.
+- **Copy** (the text) stays; **Download .txt is gone**.
+- **Report a problem** (red), as on the phone.
+
+**Server:**
+- The AI reading takes the text's id (`X-Text-Id`) and keeps the back-cover
+  photo and the AI's exact answer with it (`saved_text_readings`, R2
+  `saved-texts/<id>/`), so reports from the computer have the photo. Readings
+  whose text never arrived go after a day.
+- Front cover: `PUT/GET /api/extract/texts/<id>/cover`, R2
+  `saved-texts/<id>/cover-<time>.jpg`, `saved_texts.cover_key/cover_at`.
+- Report from the computer: `POST /api/extract/texts/<id>/report {note}` —
+  one Photo log entry per back photo (screen `/extract/saved`).
+- Photos and readings are deleted with their text (7 days, or Delete).
+- Migration 0012.
+- **V29:** on a big screen (≥ 1280 px) showing a front cover, the page grows
+  to 96rem instead of staying 64rem wide, so the text box gets room and its
+  buttons fit on one row. From 1280 px Copy picture and Download picture sit
+  beside the cover, so the cover can be as tall as the whole text column
+  (from 1536 px; a little shorter below that, so nothing wraps or scrolls).
+- **V30:** the front cover can be photographed while the AI is still reading
+  the back, so the wait isn't wasted. It's kept on the phone ("✓ Front cover
+  taken — it goes to the computer with the text.") and goes up as soon as the
+  text is saved. A cover whose text never arrives (the reading failed, then
+  Start over) is let go after an hour and never holds up the others.
+- **V31:** an AI answer lost on its way back no longer leaves the phone on
+  "Reading the text…" for good. It happened in the shop: the front cover was
+  taken while the AI read (V30), the browser put the page to sleep with the
+  camera open, and the reply (ready on the server in 23 s) never reached it.
+  Each reading now has an id the phone gives it (`X-Reading-Id`); the server
+  keeps the answer under it, and after 5 s — every 3 s after that, and on
+  coming back to the app — the phone also asks `GET /api/extract/readings/<id>`.
+  Whichever answer comes first is used; after 90 s it gives up as before.
+  On the computer, Report a problem is on two lines and Copy keeps its width
+  when it says "Copied ✓", so the buttons stay on one row; on a wide but not
+  very wide screen the cover is held to what the text column can spare.
+
+## 29. Faster AI reading: little thinking, the fastest provider.
+
+**Adds to:** §23. The shop asked whether the reading could be faster.
+
+- The readings kept since §28 showed where the time went: 70–80% of what
+  Gemini 3.8 Flash produced was hidden "thinking" before the text (e.g. 918
+  of 1,172 answer tokens), and copying text from a photo needs little. The
+  request now asks for `reasoning: { effort: "minimal" }` (Gemini 3's lowest
+  thinking level). Set `EXTRACT_THINKING` (none / minimal / low / medium /
+  high) in Cloudflare to change it without a release.
+- Two readings took 23–25 s with the same token counts as 8 s ones: a slow
+  provider at that moment. The request asks OpenRouter for the provider
+  answering fastest right now (`provider: { sort: "latency" }`).
+- Each reading records who served it and the thinking level (shown in
+  reports: "AI took: 6.1 s, served by …, thinking: minimal").
+- If OpenRouter refuses these settings for the model (400), the server asks
+  once more without them, as before V32 — the reading never fails over them.
+## 30. BookOps: photograph a book, price it while it's filled in.
 
 **Adds to:** §22 (the bottom rows), §23 (AI reading), §24 (the access code).
 First version, to try the way of working before any equipment is bought.
@@ -583,6 +687,25 @@ First version, to try the way of working before any equipment is bought.
     is ready for the next book at once — it never waits for the reading. A
     camera picker shows when there are several; "Use photo files" takes the
     pictures from files instead.
+  - **Book-shaped view** (V29): the camera's picture is shown upright, 3:4,
+    cut from the middle of a wide webcam picture, and **what's shown is
+    exactly what's saved** (`lib/client/bookops.ts`, `viewRect`). Zoom
+    (1×–3×, digital: fewer of the camera's pixels), **Turn** (for a webcam
+    mounted on its side, which makes an upright picture use the camera's
+    full width — much sharper) and **Whole picture** (not cut, for unusual
+    shapes); remembered on that computer.
+  - **Focus** (V30): a webcam's autofocus hunts on every new book; on a
+    stand the book is always the same distance away. When the camera lets
+    the browser set its focus (Chrome, and a webcam whose driver offers it —
+    read from the camera, never assumed), **Auto | Fixed** is offered: Fixed
+    keeps the focus where autofocus landed, with a Near–Far slider, and is
+    remembered for that camera by its name (`lib/client/camera-focus.ts`).
+    A camera that doesn't offer it says so, and points to its own settings
+    app, which can often turn autofocus off.
+  - **Not live all the time** (V27): "Stop camera" turns the camera off (its
+    light goes out) and it stays off — also the next time BookOps is opened
+    in that browser — until "Start camera". It also stops by itself after
+    10 minutes without a picture. A front cover already taken is kept.
   - **ISBN:** from the barcode in the back photo, read in the browser
     (`@zxing/library`, as the scanner does for photos). No barcode: the AI
     reads the printed ISBN, and it's used only if its check digit is right
@@ -618,10 +741,65 @@ First version, to try the way of working before any equipment is bought.
   moment, answers with a reference — but nothing leaves the app, and the
   screen says "test connection". The real connection replaces those two
   functions; nothing else changes.
-- **BookOps on a phone:** the phone as the camera. Two buttons (front cover,
-  back cover) open the phone's own camera app; once both are taken the book
-  is sent, and appears in BookOps on the computer within seconds. Kept
-  simple: the pricing is done on the computer.
+- **BookOps on a phone** (V28): the phone is the hand-held ISBN scanner —
+  it does what the computer can't. The live barcode scanner (the same one as
+  Scan and Evaluate) opens at once; each barcode is a new book in the
+  computer's To do list, and its title arrives from the book databases
+  within seconds, on the phone's "Sent to the computer" list and on the
+  computer (which refreshes by itself). A book already in the queue is still
+  added — it may be a second copy — and the phone says "Already in the queue
+  — added another copy". **No barcode?** "Photograph the back cover": the
+  photo is the book — the AI reads the printed ISBN (check digit checked),
+  the databases give the title, and the photo is kept as its back cover, so
+  it isn't taken again on the computer. A hand-held reader later types into
+  the computer's ISBN box instead; nothing else changes.
+- **Photos on the phone** (V31) — the way photos are meant to be taken now;
+  phones have better cameras and focus than webcams. Under the scanner,
+  **Needs photos** lists every listing still to do that lacks its front or
+  back photo (scanned on the phone, typed on the computer, or from a
+  hand-held reader); right after a scan the listing also offers **Add photos
+  now**. Tapping one opens the phone's own camera app for the back cover
+  (where the barcode is, so it's already facing up), then the front (only
+  the sides it lacks; back first everywhere since V32, the computer's camera
+  too); both go to that listing together,
+  and the AI reads the back-cover text — while the price and the rest are
+  set on the computer. The scanner pauses while photos are taken, and for
+  15 s after they're sent it ignores that book's barcode, so the book still
+  in hand isn't added again.
+- **BookOps' own camera on the phone** (V32.2): instead of handing off to
+  the phone's camera app, photos are taken full screen inside the app
+  (`phone-camera.tsx`), with the step over the picture — "1 of 2 · Back
+  cover · The side with the barcode", then by itself "2 of 2 · Turn the book
+  over: front cover" — one big shutter, Retake, the light where the phone
+  has one, and Cancel. The photo is a full-size still where the browser can
+  take one (ImageCapture), else the live picture. After the last side the
+  camera closes and the photos are sent. "Use the phone's camera app
+  instead" is one tap away, for that step. The same camera takes a no-barcode
+  back cover.
+- **The frame is what's saved** (V32.4): the photo is cut to the dotted
+  frame (`frameInPhoto`, `lib/client/bookops.ts`), mapping it through the
+  live picture's object-fit and, where the still photo is another shape
+  (4:3 photo, 16:9 live picture), through the live picture's place in the
+  middle of it. Outside the frame is dimmed. A camera-app photo isn't cut.
+  **The scanner's controls** — light, zoom, lens — are on BookOps' camera
+  too, remembered on the phone apart from the scanner's (starting from the
+  scanner's lens).
+- **The computer's camera is off by default** (V31): the camera column is
+  replaced by a note on where the photos come from, and "Use the computer's
+  camera" brings it back (remembered on that computer). Each listing shows
+  its two photo slots, "Waiting for the photo from the phone" until they
+  arrive.
+- **Photos for a book already in the queue** (V28): when the open book lacks
+  photos (scanned, or only its back photographed on a phone), the camera
+  says "Photos for: <title>" and takes only the sides it lacks; they're added
+  to that book and the AI reads it again (filling in only what's still
+  empty). "New book instead" makes the camera start a new book. When the
+  open book has its photos, or nothing is open, two pictures make a new book
+  as before.
+- **Same ISBN** (V28): books still to do that share an ISBN are tagged "Same
+  ISBN · n in queue"; the open one says "Another copy of this book is in the
+  queue", with a button to open the other — to keep it as a second copy, or
+  Delete a double scan.
 - **Behind the access code**, like Saved texts — the pages, the photos and
   the API (`/api/extract/bookops/…`, so the existing login cookie covers it).
 - **Stored apart from the catalog:** its own table (`bookops_books`,
@@ -638,3 +816,14 @@ First version, to try the way of working before any equipment is bought.
 - **Not yet:** cropping and straightening the front photo (waits for the
   stand, where the book's place is fixed); a live "barcode visible" sign;
   the real web store connection.
+
+## 31. Two lines of work joined (V33).
+
+BookOps (§30) was built in another session from 16 to 18 November and went
+live then (migration `0012_bookops`); this line of work (§27–§29) had started
+from the 3 November version without it, so its releases from 23 November
+(V26–V32) took BookOps off the live app. Its data stayed in the database.
+V33 joins both: BookOps is back, with Extract as reworked here. The two lines
+had both used the version numbers V26–V32; V33 is above both. Both 0012
+migrations are applied and don't touch the same tables.
+**Only one session at a time should put the app live** (see CLAUDE.md).

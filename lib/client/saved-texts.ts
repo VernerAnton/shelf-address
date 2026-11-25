@@ -63,4 +63,87 @@ export function syncTexts(): Promise<SyncResult> {
   return syncing;
 }
 
-if (typeof window !== "undefined") window.addEventListener("online", () => void syncTexts());
+/**
+ * Front covers (§28) waiting to go up, one per text (a newer photo replaces a
+ * waiting one). They go after the texts, as the server needs the text first.
+ */
+const COVERS = "extract:covers";
+type OutgoingCover = { id: string; photo: Blob; takenAt: string };
+export type CoverResult = "saved" | "waiting" | "loggedout";
+
+export async function queueCover(id: string, photo: Blob) {
+  const box = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+  box[id] = { id, photo, takenAt: new Date().toISOString() };
+  await kvSet(COVERS, box);
+}
+
+let sendingCovers: Promise<Record<string, CoverResult>> | null = null;
+
+/**
+ * Sends the waiting front covers (after any waiting texts). Resolves to how
+ * it went for the text `id` (the one on screen): "saved" once its cover is up
+ * (or none is waiting for it), "waiting" if it's still on the phone.
+ */
+export async function syncCovers(id?: string): Promise<CoverResult> {
+  sendingCovers ??= (async (): Promise<Record<string, CoverResult>> => {
+    const outcome: Record<string, CoverResult> = {};
+    const texts = await syncTexts();
+    const tried = new Set<string>();
+    for (;;) {
+      const box = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+      const entry = Object.values(box).find((e) => !tried.has(`${e.id}@${e.takenAt}`));
+      if (!entry) return outcome;
+      tried.add(`${entry.id}@${entry.takenAt}`);
+      if (texts === "loggedout") {
+        outcome[entry.id] = "loggedout";
+        continue;
+      }
+      let response: Response;
+      try {
+        response = await fetch(`/api/extract/texts/${entry.id}/cover`, {
+          method: "PUT",
+          headers: { "content-type": entry.photo.type || "image/jpeg" },
+          body: entry.photo,
+        });
+      } catch {
+        // No signal: everything still waiting stays for later.
+        for (const e of Object.values(box)) outcome[e.id] ??= "waiting";
+        return outcome;
+      }
+      if (response.status === 401) {
+        outcome[entry.id] = "loggedout";
+        continue;
+      }
+      if (response.status >= 500) {
+        outcome[entry.id] = "waiting";
+        continue;
+      }
+      // The text isn't up yet (still waiting itself, or still being read: V30): keep the cover
+      // for later, and go on with the others. One whose text never turns up within the hour is let go.
+      if (response.status === 404) {
+        const textWaiting = ((await kvGet<Record<string, OutgoingText>>(OUTBOX)) ?? {})[entry.id];
+        if (textWaiting || Date.now() - Date.parse(entry.takenAt) < 3600_000) {
+          outcome[entry.id] = "waiting";
+          continue;
+        }
+      }
+      // Saved, or refused for good (the text was deleted on the computer, say).
+      outcome[entry.id] = "saved";
+      const now = (await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {};
+      if (now[entry.id]?.takenAt === entry.takenAt) {
+        delete now[entry.id];
+        await kvSet(COVERS, now);
+      }
+    }
+  })().finally(() => {
+    sendingCovers = null;
+  });
+  const outcome = await sendingCovers;
+  if (id && !outcome[id] && ((await kvGet<Record<string, OutgoingCover>>(COVERS)) ?? {})[id]) {
+    // Queued just as a run was finishing: one more go for it.
+    return syncCovers(id);
+  }
+  return (id && outcome[id]) || "saved";
+}
+
+if (typeof window !== "undefined") window.addEventListener("online", () => void syncCovers());

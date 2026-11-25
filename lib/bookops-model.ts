@@ -2,7 +2,7 @@ import { isCondition, type Condition } from "@/lib/copy-model";
 
 /**
  * BookOps rules shared by the server and the screen (no server imports).
- * docs/spec-corrections.md §27.
+ * docs/spec-corrections.md §30.
  *
  * A book photographed for BookOps is filled in from three places: the book
  * databases (by ISBN), the AI (read off the photos), and the person. Each

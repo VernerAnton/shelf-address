@@ -1,5 +1,5 @@
 /**
- * BookOps' connection to the web store (docs/spec-corrections.md §27).
+ * BookOps' connection to the web store (docs/spec-corrections.md §30).
  *
  * A STAND-IN for now: nothing leaves the app. It behaves like a real
  * connection — it takes a moment, answers with a listing reference, and a

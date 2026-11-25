@@ -4,7 +4,7 @@ import { BookOpsPhone } from "./bookops-phone";
 import { BookOpsScreen } from "./bookops-screen";
 
 /**
- * BookOps (docs/spec-corrections.md §27), the left-hand option in the Extract
+ * BookOps (docs/spec-corrections.md §30), the left-hand option in the Extract
  * tab. On a computer: the whole screen — queue, book, camera. On a phone: the
  * phone as the camera, sending books to the computer. Phone or computer as
  * everywhere else (lib/device.ts).

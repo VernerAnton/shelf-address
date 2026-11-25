@@ -2,7 +2,7 @@ const { chromium, devices } = require(require("child_process").execSync("npm roo
 let passed = 0; const failures = [];
 const check = (name, cond, extra = "") => { if (cond) passed++; else failures.push(name + (extra ? ` — ${extra}` : "")); };
 // The version the app should report (lib/version.ts).
-const APP_VERSION = Number(/APP_VERSION = (\d+)/.exec(require("fs").readFileSync(__dirname + "/../lib/version.ts", "utf8"))[1]);
+const APP_VERSION = Number(/APP_VERSION = "?([\d.]+)"?/.exec(require("fs").readFileSync(__dirname + "/../lib/version.ts", "utf8"))[1]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const visible = (loc, t = 15000) => loc.first().waitFor({ state: "visible", timeout: t }).then(() => true, () => false);
 

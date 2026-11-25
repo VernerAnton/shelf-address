@@ -152,7 +152,7 @@ const t = suite();
     const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
     return { main: document.querySelector("main").getBoundingClientRect().width, rows: new Set(tops).size, scroll: document.documentElement.scrollHeight - innerHeight, cover: document.querySelector("figure img").getBoundingClientRect().height };
   });
-  check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 400, JSON.stringify(wide));
+  check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 360, JSON.stringify(wide)); // 360: Extract has two bottom rows since V33
   // V31: Report a problem on two lines, and Copy keeps its width when it says Copied, so nothing jumps to a second row.
   for (const [w, h] of [[1366, 768], [1280, 860], [1536, 730]]) {
     await pc.setViewportSize({ width: w, height: h });

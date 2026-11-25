@@ -87,7 +87,8 @@ const t = suite();
   await pc.waitForURL(/\/extract\/saved$/);
   check("computer: the Extract tab still goes to Saved texts, Text Extract marked", (await current(pcSub)) === "Text Extract");
   await pcSub.getByRole("link", { name: "BookOps" }).click();
-  await pc.waitForURL(/\/extract\/bookops$/);
+  // The first visit compiles a big page; on a just-built test server that has taken over 20 s.
+  await pc.waitForURL(/\/extract\/bookops$/, { timeout: 60000 });
   check("computer: BookOps opens from the row", await visible(pc.getByRole("heading", { name: "BookOps" })) && (await current(pcSub)) === "BookOps");
 
   // Behind the access code, like Saved texts.

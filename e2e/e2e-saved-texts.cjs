@@ -143,8 +143,17 @@ const t = suite();
     const text = document.querySelector("[aria-label='Selected text'] textarea").getBoundingClientRect();
     return { beside: img.left >= text.right, tall: img.height, textTall: text.height, whole: document.querySelector("figure img").naturalWidth > 0 };
   });
-  check("…beside the text, as tall as the text box, big enough to judge", placed.beside && placed.whole && placed.tall >= 300 && Math.abs(placed.tall - placed.textTall) < 4, JSON.stringify(placed));
+  check("…beside the text, at least as tall as the text box, big enough to judge", placed.beside && placed.whole && placed.tall >= 300 && placed.tall >= placed.textTall - 4, JSON.stringify(placed));
   check("…and a small one in the list", (await list.getByRole("button").first().locator("img").count()) === 1 && (await list.getByRole("button").last().locator("img").count()) === 0);
+  // A big screen (like the shop's, 1536×730 in the browser): the page grows to use the width (V28).
+  await pc.setViewportSize({ width: 1536, height: 730 });
+  await sleep(300);
+  const wide = await pc.evaluate(() => {
+    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|✓ Mark done|Delete|Report a problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
+    return { main: document.querySelector("main").getBoundingClientRect().width, rows: new Set(tops).size, scroll: document.documentElement.scrollHeight - innerHeight, cover: document.querySelector("figure img").getBoundingClientRect().height };
+  });
+  check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 400, JSON.stringify(wide));
+  await pc.setViewportSize({ width: 1280, height: 860 });
   await figure.getByRole("button", { name: "Copy picture" }).click();
   check("Copy picture puts the picture on the clipboard", await visible(figure.getByRole("button", { name: "Picture copied ✓" })) && (await pc.evaluate(async () => (await navigator.clipboard.read())[0].types)).includes("image/png"));
   const picFile = pc.waitForEvent("download");

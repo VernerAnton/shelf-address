@@ -629,3 +629,8 @@ part-way, with no sign anything was wrong.
   one Photo log entry per back photo (screen `/extract/saved`).
 - Photos and readings are deleted with their text (7 days, or Delete).
 - Migration 0012.
+- **V29:** on a big screen (≥ 1280 px) showing a front cover, the page grows
+  to 96rem instead of staying 64rem wide, so the text box gets room and its
+  buttons fit on one row. From 1280 px Copy picture and Download picture sit
+  beside the cover, so the cover can be as tall as the whole text column
+  (from 1536 px; a little shorter below that, so nothing wraps or scrolls).

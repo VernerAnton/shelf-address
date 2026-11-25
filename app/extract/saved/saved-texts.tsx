@@ -302,7 +302,8 @@ export function SavedTexts() {
                     rows={14}
                     className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
-                      text.coverAt ? "md:h-[calc(100dvh-28.5rem)]" : "md:h-[calc(100dvh-25rem)]"
+                      // On a wide screen (the page grows with a cover) they fit on one row again.
+                      text.coverAt ? "md:h-[calc(100dvh-28.5rem)] xl:h-[calc(100dvh-25rem)]" : "md:h-[calc(100dvh-25rem)]"
                     }`}
                   />
                   <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
@@ -341,16 +342,17 @@ export function SavedTexts() {
                 </div>
 
                 {text.coverAt && (
-                  <figure aria-label="Front cover" className="flex flex-col items-start gap-2">
+                  <figure aria-label="Front cover" className="flex flex-col items-start gap-2 xl:flex-row">
                     <button type="button" onClick={() => setZoom(true)} title="Click to see it full size" className="cursor-zoom-in">
                       {/* eslint-disable-next-line @next/next/no-img-element -- served from our own API behind the login */}
                       <img
                         src={coverUrl(text)}
                         alt="Front cover"
-                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-28.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem]"
+                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-28.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[calc(100dvh-23rem)] xl:max-w-[40rem] 2xl:h-[calc(100dvh-19.5rem)]"
                       />
                     </button>
-                    <div className="grid w-full grid-cols-2 gap-2 md:flex">
+                    {/* On a wide screen the buttons sit beside the picture, so it can be as tall as the whole text column. */}
+                    <div className="grid w-full grid-cols-2 gap-2 md:flex xl:w-auto xl:flex-col">
                       <button type="button" onClick={() => void copyPicture(text)} className={`${button} bg-accent text-accent-contrast`}>
                         {pictureCopied ? "Picture copied ✓" : "Copy picture"}
                       </button>

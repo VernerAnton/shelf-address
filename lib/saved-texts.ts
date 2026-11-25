@@ -331,7 +331,7 @@ export async function reportText(id: string, note: unknown, userAgent: string | 
         bytes: photo?.size ?? null,
         mime: photo?.type ?? null,
         userAgent,
-        appVersion: APP_VERSION,
+        appVersion: Number(APP_VERSION),
       },
       photo,
       null,

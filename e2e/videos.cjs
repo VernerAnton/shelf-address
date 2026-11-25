@@ -1,6 +1,7 @@
 // Fake camera scenes for Chromium (--use-file-for-fake-video-capture), drawn in
 // code and written as Y4M on first use (e2e/.cache, not committed):
 //   book     the barcode of EAN 9789510366868 on a book's back
+//   upright  the same barcode, narrower, in the middle (inside BookOps' portrait view)
 //   notbook  a plain scene with no barcode
 //   cover    a book cover lying on a darker table, for the cover camera
 const fs = require("fs");
@@ -45,6 +46,13 @@ const SCENES = {
     rect(110, 120, 420, 240, 235); // white label
     const bits = ean13("9789510366868");
     for (let i = 0; i < 95; i++) if (bits[i] === "1") rect(130 + i * 4, 150, 4, 180, 20);
+  },
+  // The same barcode as "book", narrower and in the middle: inside BookOps' upright (portrait) view.
+  upright: (rect) => {
+    rect(0, 0, W, H, 150, 120, 140);
+    rect(150, 150, 340, 200, 235);
+    const bits = ean13("9789510366868");
+    for (let i = 0; i < 95; i++) if (bits[i] === "1") rect(177 + i * 3, 175, 3, 150, 20);
   },
   notbook: (rect) => {
     rect(0, 0, W, H, 140, 110, 150);

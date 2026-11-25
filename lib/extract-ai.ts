@@ -50,7 +50,8 @@ export class ExtractError extends Error {
 type Settings = { code: string | null; key: string | null; model: string; base: string; thinking: string };
 const THINKING = ["none", "minimal", "low", "medium", "high"];
 
-async function settings(): Promise<Settings> {
+/** Exported for BookOps' own reading (lib/bookops-ai.ts), which asks the same model for more than the text. */
+export async function settings(): Promise<Settings> {
   const env = (await getEnv()) as unknown as Record<string, string | undefined>;
   return {
     code: env.EXTRACT_CODE?.trim() || null,

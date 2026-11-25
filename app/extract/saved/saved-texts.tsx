@@ -256,10 +256,11 @@ export function SavedTexts() {
         </p>
       ) : (
         <div className="md:grid md:grid-cols-[20rem_1fr] md:items-start md:gap-6">
-          {/* On a computer the list fits the window and scrolls inside itself, so the page doesn't (V27). */}
+          {/* On a computer the list fits the window and scrolls inside itself, so the page doesn't (V27).
+              The heights below allow for both bottom rows: the tabs and Extract's own (BookOps | Text Extract). */}
           <div
             aria-label="Saved texts"
-            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-18rem)] ${text ? "hidden md:flex" : ""}`}
+            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-21rem)] ${text ? "hidden md:flex" : ""}`}
           >
             <section aria-label="To do" className="flex min-h-0 flex-col gap-2">
               <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
@@ -303,7 +304,7 @@ export function SavedTexts() {
                     className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
                       // On a wide screen (the page grows with a cover) they fit on one row again.
-                      text.coverAt ? "md:h-[calc(100dvh-28.5rem)] xl:h-[calc(100dvh-25rem)]" : "md:h-[calc(100dvh-25rem)]"
+                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-28rem)]"
                     }`}
                   />
                   <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
@@ -354,7 +355,7 @@ export function SavedTexts() {
                       <img
                         src={coverUrl(text)}
                         alt="Front cover"
-                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-28.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_23rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_19.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]"
+                        className="max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]"
                       />
                     </button>
                     {/*

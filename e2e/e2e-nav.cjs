@@ -1,5 +1,6 @@
 // The bottom rows (docs/spec-corrections.md §22): Sections · Evaluate · Extract,
-// and Places · Scan · Catalog above them while in Sections.
+// and Places · Scan · Catalog above them while in Sections; BookOps · Text
+// Extract above them while in Extract (§27).
 const { chromium, devices } = require(require("child_process").execSync("npm root -g").toString().trim() + "/playwright");
 let passed = 0; const failures = [];
 const check = (name, cond, extra = "") => { if (cond) passed++; else failures.push(name + (extra ? ` — ${extra}` : "")); };
@@ -21,7 +22,7 @@ const visible = (loc, t = 15000) => loc.first().waitFor({ state: "visible", time
   const clearOfRows = async () => {
     await page.waitForTimeout(1500);
     return page.evaluate(() => {
-      const stamp = [...document.querySelectorAll("p, span, div")].reverse().find((el) => /^V\d+$/.test(el.textContent.trim()));
+      const stamp = [...document.querySelectorAll("p, span, div")].reverse().find((el) => /^V[\d.]+$/.test(el.textContent.trim()));
       const rows = document.querySelector("nav[aria-label=Main]").parentElement.getBoundingClientRect();
       if (!stamp) return false;
       const stampBottom = stamp.getBoundingClientRect().bottom + scrollY;
@@ -34,13 +35,22 @@ const visible = (loc, t = 15000) => loc.first().waitFor({ state: "visible", time
   await visible(page.getByRole("region", { name: "Evaluate settings" }));
   check("main row: Sections, Evaluate, Extract", (await labels(main)) === "Sections,Evaluate,Extract", await labels(main));
   check("on Evaluate: Evaluate marked", (await current(main)) === "Evaluate");
-  check("on Evaluate: no Sections row", (await sub.count()) === 0);
+  check("on Evaluate: no Sections row, no Extract row", (await sub.count()) === 0 && (await page.getByRole("navigation", { name: "Extract" }).count()) === 0);
   check("Evaluate's end clear of the rows", await clearOfRows());
 
   await main.getByRole("link", { name: "Extract" }).click();
   await page.waitForURL(/\/extract$/);
   check("Extract opens", await visible(page.getByRole("heading", { name: "Extract" })));
   check("on Extract: Extract marked, no Sections row", (await current(main)) === "Extract" && (await sub.count()) === 0);
+  // Extract has its own row (§27): BookOps · Text Extract; the tab itself opens Text Extract.
+  const extract = page.getByRole("navigation", { name: "Extract" });
+  check("Extract row appears: BookOps, Text Extract", (await labels(extract)) === "BookOps,Text Extract", await labels(extract).catch(() => ""));
+  check("on Extract: Text Extract marked", (await current(extract)) === "Text Extract");
+  check("Extract's end clear of both rows", await clearOfRows());
+  await extract.getByRole("link", { name: "BookOps" }).click();
+  await page.waitForURL(/\/extract\/bookops$/);
+  check("BookOps opens from the Extract row, marked", await visible(page.getByRole("heading", { name: "BookOps" })) && (await current(main)) === "Extract" && (await current(extract)) === "BookOps");
+  check("BookOps' end clear of both rows", await clearOfRows());
 
   await main.getByRole("link", { name: "Sections" }).click();
   await page.waitForURL(/\/sections$/);

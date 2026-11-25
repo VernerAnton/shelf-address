@@ -69,7 +69,8 @@ const FETCH_TIMEOUT_MS = 8000;
 const COVER_MAX_BYTES = 3 * 1024 * 1024;
 const USER_AGENT = "Shelf-Address/1 (personal bookshop shelf index)";
 
-async function lookupConfig(): Promise<LookupConfig> {
+/** Exported for BookOps (lib/bookops.ts), which asks the same sources without touching the catalog. */
+export async function lookupConfig(): Promise<LookupConfig> {
   // Overridable so tests can point the chain at a local stand-in; production
   // uses the real services. GOOGLE_BOOKS_API_KEY is a Worker secret.
   const env = (await getEnv()) as unknown as Record<string, string | undefined>;
@@ -83,7 +84,7 @@ async function lookupConfig(): Promise<LookupConfig> {
   };
 }
 
-const getJson: GetJson = async (url) => {
+export const getJson: GetJson = async (url) => {
   const response = await fetch(url, {
     headers: { accept: "application/json", "user-agent": USER_AGENT },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),

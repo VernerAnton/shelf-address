@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookIcon, ScanIcon, SiteIcon, TagIcon, TextScanIcon, TreeIcon } from "@/components/icons";
+import { BookIcon, CameraIcon, ScanIcon, SiteIcon, TagIcon, TextScanIcon, TreeIcon } from "@/components/icons";
 
 const under = (pathname: string, href: string) => pathname === href || pathname.startsWith(`${href}/`);
 
@@ -11,6 +11,10 @@ const under = (pathname: string, href: string) => pathname === href || pathname.
  * the main tabs — Sections, Evaluate, Extract — and, while in Sections, its own
  * row just above them: Places, Scan, Catalog. Book pages (/copies) belong to
  * Sections too.
+ *
+ * Extract has a row of its own as well (§30): BookOps on the left, Text
+ * Extract on the right. The Extract tab itself still opens Text Extract, as
+ * before — the camera on a phone, Saved texts on a computer.
  */
 const MAIN = [
   { href: "/sections", label: "Sections", Icon: TreeIcon, area: ["/sections", "/scan", "/catalog", "/copies"] },
@@ -24,12 +28,25 @@ const SECTIONS = [
   { href: "/catalog", label: "Catalog", Icon: BookIcon },
 ] as const;
 
+const EXTRACT = [
+  { href: "/extract/bookops", label: "BookOps", Icon: CameraIcon },
+  { href: "/extract", label: "Text Extract", Icon: TextScanIcon },
+] as const;
+
 const MAIN_ROW = "4rem";
 const SUB_ROW = "3rem";
 
 export function BottomNav() {
   const pathname = usePathname();
   const inSections = MAIN[0].area.some((a) => under(pathname, a));
+  const inExtract = under(pathname, "/extract");
+  const inBookOps = under(pathname, "/extract/bookops");
+  const sub = inSections
+    ? { label: "Sections", items: SECTIONS.map((item) => ({ ...item, active: under(pathname, item.href) })) }
+    : inExtract
+      ? // Everything in Extract that isn't BookOps is Text Extract (Saved texts too).
+        { label: "Extract", items: EXTRACT.map((item) => ({ ...item, active: (item.href === "/extract/bookops") === inBookOps })) }
+      : null;
 
   return (
     <>
@@ -37,14 +54,13 @@ export function BottomNav() {
       <div
         aria-hidden
         className="shrink-0"
-        style={{ height: `calc(${MAIN_ROW}${inSections ? ` + ${SUB_ROW}` : ""} + env(safe-area-inset-bottom))` }}
+        style={{ height: `calc(${MAIN_ROW}${sub ? ` + ${SUB_ROW}` : ""} + env(safe-area-inset-bottom))` }}
       />
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
-        {inSections && (
-          <nav aria-label="Sections" className="border-b border-line">
+        {sub && (
+          <nav aria-label={sub.label} className="border-b border-line">
             <ul className="mx-auto flex max-w-md gap-1 px-2 py-1.5" style={{ height: SUB_ROW }}>
-              {SECTIONS.map(({ href, label, Icon }) => {
-                const active = under(pathname, href);
+              {sub.items.map(({ href, label, Icon, active }) => {
                 return (
                   <li key={href} className="flex-1">
                     <Link

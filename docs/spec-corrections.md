@@ -668,3 +668,162 @@ part-way, with no sign anything was wrong.
   reports: "AI took: 6.1 s, served by …, thinking: minimal").
 - If OpenRouter refuses these settings for the model (400), the server asks
   once more without them, as before V32 — the reading never fails over them.
+## 30. BookOps: photograph a book, price it while it's filled in.
+
+**Adds to:** §22 (the bottom rows), §23 (AI reading), §24 (the access code).
+First version, to try the way of working before any equipment is bought.
+
+- **Where:** the Extract tab has its own row above the main tabs, like
+  Sections has: **BookOps** on the left, **Text Extract** on the right.
+  Tapping the Extract tab opens Text Extract exactly as before (the camera on
+  a phone, Saved texts on a computer; a computer still opens on Saved texts,
+  §25). Saved texts counts as Text Extract. Nothing else in the app changed.
+- **BookOps on a computer** (`/extract/bookops`), one screen: the queue on the
+  left, the book in the middle, the camera on the right.
+  - **Camera:** the computer's camera (a webcam on a stand, later; a laptop's
+    own, for now), started when the screen opens, at the largest size it
+    gives. Two pictures per book: front cover, then back. **Space** takes the
+    picture, unless something is being typed. After the back cover the camera
+    is ready for the next book at once — it never waits for the reading. A
+    camera picker shows when there are several; "Use photo files" takes the
+    pictures from files instead.
+  - **Book-shaped view** (V29): the camera's picture is shown upright, 3:4,
+    cut from the middle of a wide webcam picture, and **what's shown is
+    exactly what's saved** (`lib/client/bookops.ts`, `viewRect`). Zoom
+    (1×–3×, digital: fewer of the camera's pixels), **Turn** (for a webcam
+    mounted on its side, which makes an upright picture use the camera's
+    full width — much sharper) and **Whole picture** (not cut, for unusual
+    shapes); remembered on that computer.
+  - **Focus** (V30): a webcam's autofocus hunts on every new book; on a
+    stand the book is always the same distance away. When the camera lets
+    the browser set its focus (Chrome, and a webcam whose driver offers it —
+    read from the camera, never assumed), **Auto | Fixed** is offered: Fixed
+    keeps the focus where autofocus landed, with a Near–Far slider, and is
+    remembered for that camera by its name (`lib/client/camera-focus.ts`).
+    A camera that doesn't offer it says so, and points to its own settings
+    app, which can often turn autofocus off.
+  - **Not live all the time** (V27): "Stop camera" turns the camera off (its
+    light goes out) and it stays off — also the next time BookOps is opened
+    in that browser — until "Start camera". It also stops by itself after
+    10 minutes without a picture. A front cover already taken is kept.
+  - **ISBN:** from the barcode in the back photo, read in the browser
+    (`@zxing/library`, as the scanner does for photos). No barcode: the AI
+    reads the printed ISBN, and it's used only if its check digit is right
+    (`lib/isbn-text.ts`) — a misread number is dropped, never guessed. It can
+    also be typed on the book. The ISBN box at the top adds a book by ISBN
+    alone (typed, or a hand-held reader).
+  - **Title, author, publisher, year:** from the book databases by ISBN
+    (Finna → Google Books → Open Library, the same chain as the catalog's,
+    without touching the catalog). Only if there's no ISBN, or no database
+    knows it, are title and author the AI's reading of the cover — marked
+    "AI read it · check".
+  - **Description:** the back-cover text, transcribed by the AI (the same
+    model, key and spending cap as Extract; `lib/bookops-ai.ts` asks for the
+    text, the ISBN, the title and the author in one go, both photos).
+  - **Every field says where its text came from** (Finna, AI, Yours), and
+    fills itself in only while nobody has typed in it: what the person typed
+    is never overwritten, the AI's reading gives way to a database, a
+    database's answer stays (`mayFill`, `lib/bookops-model.ts`).
+  - **Price and condition are the person's.** No price is suggested. Four
+    plain links open, each in its own tab, the search of Antikvaari.fi (used:
+    what others ask), Adlibris, Suomalainen and Akateeminen (new: price and
+    whether it's in stock), with the ISBN filled in — or title and author for
+    a book without one (`lib/price-sites.ts`). Condition is K1–K5, one click.
+    Copies and location are typed (location is free text for now, not the
+    places tree).
+  - Everything saves by itself. The list refreshes every 3 s, so a field
+    filled in, or a book sent from a phone, appears without reloading — and
+    never moves what's being typed.
+- **Send to web store** needs a title, a price and a condition, and lists the
+  book exactly as it stands; it then moves to Listed, locked, and "Take back
+  to change it" makes it a draft again. **The connection is a stand-in for
+  now** (`lib/bookops-store.ts`): it behaves like a real one — takes a
+  moment, answers with a reference — but nothing leaves the app, and the
+  screen says "test connection". The real connection replaces those two
+  functions; nothing else changes.
+- **BookOps on a phone** (V28): the phone is the hand-held ISBN scanner —
+  it does what the computer can't. The live barcode scanner (the same one as
+  Scan and Evaluate) opens at once; each barcode is a new book in the
+  computer's To do list, and its title arrives from the book databases
+  within seconds, on the phone's "Sent to the computer" list and on the
+  computer (which refreshes by itself). A book already in the queue is still
+  added — it may be a second copy — and the phone says "Already in the queue
+  — added another copy". **No barcode?** "Photograph the back cover": the
+  photo is the book — the AI reads the printed ISBN (check digit checked),
+  the databases give the title, and the photo is kept as its back cover, so
+  it isn't taken again on the computer. A hand-held reader later types into
+  the computer's ISBN box instead; nothing else changes.
+- **Photos on the phone** (V31) — the way photos are meant to be taken now;
+  phones have better cameras and focus than webcams. Under the scanner,
+  **Needs photos** lists every listing still to do that lacks its front or
+  back photo (scanned on the phone, typed on the computer, or from a
+  hand-held reader); right after a scan the listing also offers **Add photos
+  now**. Tapping one opens the phone's own camera app for the back cover
+  (where the barcode is, so it's already facing up), then the front (only
+  the sides it lacks; back first everywhere since V32, the computer's camera
+  too); both go to that listing together,
+  and the AI reads the back-cover text — while the price and the rest are
+  set on the computer. The scanner pauses while photos are taken, and for
+  15 s after they're sent it ignores that book's barcode, so the book still
+  in hand isn't added again.
+- **BookOps' own camera on the phone** (V32.2): instead of handing off to
+  the phone's camera app, photos are taken full screen inside the app
+  (`phone-camera.tsx`), with the step over the picture — "1 of 2 · Back
+  cover · The side with the barcode", then by itself "2 of 2 · Turn the book
+  over: front cover" — one big shutter, Retake, the light where the phone
+  has one, and Cancel. The photo is a full-size still where the browser can
+  take one (ImageCapture), else the live picture. After the last side the
+  camera closes and the photos are sent. "Use the phone's camera app
+  instead" is one tap away, for that step. The same camera takes a no-barcode
+  back cover.
+- **The frame is what's saved** (V32.4): the photo is cut to the dotted
+  frame (`frameInPhoto`, `lib/client/bookops.ts`), mapping it through the
+  live picture's object-fit and, where the still photo is another shape
+  (4:3 photo, 16:9 live picture), through the live picture's place in the
+  middle of it. Outside the frame is dimmed. A camera-app photo isn't cut.
+  **The scanner's controls** — light, zoom, lens — are on BookOps' camera
+  too, remembered on the phone apart from the scanner's (starting from the
+  scanner's lens).
+- **The computer's camera is off by default** (V31): the camera column is
+  replaced by a note on where the photos come from, and "Use the computer's
+  camera" brings it back (remembered on that computer). Each listing shows
+  its two photo slots, "Waiting for the photo from the phone" until they
+  arrive.
+- **Photos for a book already in the queue** (V28): when the open book lacks
+  photos (scanned, or only its back photographed on a phone), the camera
+  says "Photos for: <title>" and takes only the sides it lacks; they're added
+  to that book and the AI reads it again (filling in only what's still
+  empty). "New book instead" makes the camera start a new book. When the
+  open book has its photos, or nothing is open, two pictures make a new book
+  as before.
+- **Same ISBN** (V28): books still to do that share an ISBN are tagged "Same
+  ISBN · n in queue"; the open one says "Another copy of this book is in the
+  queue", with a button to open the other — to keep it as a second copy, or
+  Delete a double scan.
+- **Behind the access code**, like Saved texts — the pages, the photos and
+  the API (`/api/extract/bookops/…`, so the existing login cookie covers it).
+- **Stored apart from the catalog:** its own table (`bookops_books`,
+  migration 0012) and its own photos in R2 (`bookops/…`); the catalog's
+  editions, copies and places aren't read or written. Books stay until
+  deleted (Delete removes the photos too).
+- **The filling-in** (`processBook`, `lib/bookops.ts`) runs after the book is
+  stored: the lookup and the AI side by side, then the lookup again if the
+  AI is what found the ISBN. Whichever screen added the book starts it; any
+  BookOps screen that sees a book still waiting gives it another push every
+  20 s, and a claim in the database keeps that to one at a time. A reading
+  that failed (no signal to the AI, the spending limit) says why, with "try
+  again".
+- **Not yet:** cropping and straightening the front photo (waits for the
+  stand, where the book's place is fixed); a live "barcode visible" sign;
+  the real web store connection.
+
+## 31. Two lines of work joined (V33).
+
+BookOps (§30) was built in another session from 16 to 18 November and went
+live then (migration `0012_bookops`); this line of work (§27–§29) had started
+from the 3 November version without it, so its releases from 23 November
+(V26–V32) took BookOps off the live app. Its data stayed in the database.
+V33 joins both: BookOps is back, with Extract as reworked here. The two lines
+had both used the version numbers V26–V32; V33 is above both. Both 0012
+migrations are applied and don't touch the same tables.
+**Only one session at a time should put the app live** (see CLAUDE.md).

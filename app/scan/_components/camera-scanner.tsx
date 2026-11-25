@@ -537,7 +537,12 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
     return () => clearTimeout(timer);
   }, [autoStart, disabled, start]);
 
-  // The cover camera needs the camera for a moment; hand it over and resume.
+  // The cover camera needs the camera for a moment; hand it over and resume —
+  // unless the scanner has been switched off (disabled) meanwhile.
+  const disabledRef = useRef(disabled);
+  useEffect(() => {
+    disabledRef.current = disabled;
+  }, [disabled]);
   useEffect(() => {
     let resume = false;
     return onCameraClaims({
@@ -550,7 +555,7 @@ export function CameraScanner({ disabled, onIsbn, autoStart = false }: Props) {
       release: () => {
         if (resume) {
           resume = false;
-          void start();
+          if (!disabledRef.current) void start();
         }
       },
     });

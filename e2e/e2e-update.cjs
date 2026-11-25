@@ -33,12 +33,13 @@ const t = suite();
   check("same build: no prompt", (await prompt.count()) === 0);
 
   // A newer deploy (with a version bump).
-  let answer = { version: APP_VERSION + 1, buildId: "newer-build" };
+  const NEXT = String(Math.floor(Number(APP_VERSION)) + 1); // the next whole version
+  let answer = { version: NEXT, buildId: "newer-build" };
   await ctx.route("**/api/version", (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify(answer) }));
   await page.getByRole("textbox", { name: "Name" }).fill("Half-typed name");
   await page.evaluate(() => { window.__sameDocument = true; });
   await becomeVisible(page);
-  check("newer build: offers a reload, naming the version", await visible(prompt.getByText(`A newer version (V${APP_VERSION + 1}) is ready.`)));
+  check("newer build: offers a reload, naming the version", await visible(prompt.getByText(`A newer version (V${NEXT}) is ready.`)));
   check("…and the one in use", await visible(prompt.getByText(`You're on V${APP_VERSION}.`)));
   await sleep(2000);
   check("never reloads by itself (the half-typed form survives)", (await page.evaluate(() => window.__sameDocument)) === true && (await page.getByRole("textbox", { name: "Name" }).inputValue()) === "Half-typed name");

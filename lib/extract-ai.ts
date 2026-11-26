@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { getDb, getEnv } from "@/lib/cloudflare";
 import { tidyAiText } from "@/lib/extract-text";
-import { isAllowedModel } from "@/lib/ai-models";
+import { isAllowedModel, leastThinking } from "@/lib/ai-models";
 
 /**
  * Extract's AI reading (docs/spec-corrections.md §23): a back-cover photo is
@@ -16,8 +16,9 @@ import { isAllowedModel } from "@/lib/ai-models";
  *                        limit on the key), not here.
  *   EXTRACT_MODEL        optional: another OpenRouter model id.
  *   EXTRACT_THINKING     optional: how much the model may think before it
- *                        answers — none (default since V33.6), minimal, low,
- *                        medium, high. Copying text needs little thinking, and
+ *                        answers — none, minimal, low, medium, high. Unset
+ *                        (the usual): the least each model accepts (V33.7,
+ *                        lib/ai-models.ts). Copying text needs little thinking, and
  *                        thinking was most of the wait (§29).
  *   OPENROUTER_BASE      optional: tests point it at a local stand-in.
  */
@@ -59,7 +60,7 @@ export async function settings(): Promise<Settings> {
     code: env.EXTRACT_CODE?.trim() || null,
     key: env.OPENROUTER_API_KEY?.trim() || null,
     model: env.EXTRACT_MODEL?.trim() || DEFAULT_MODEL,
-    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "none",
+    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "",
     base: (env.OPENROUTER_BASE?.trim() || OPENROUTER).replace(/\/$/, ""),
   };
 }
@@ -228,8 +229,10 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
       }),
       signal: AbortSignal.timeout(Math.max(1000, AI_TIMEOUT_MS - (Date.now() - started))),
     });
-  // If the model refuses a setting (400): "none" falls back to "minimal", and that to no settings, as before V32.
-  const tries: (string | null)[] = [s.thinking, ...(s.thinking === "none" ? ["minimal"] : []), null];
+  // The least thinking this model accepts (V33.7), unless EXTRACT_THINKING says otherwise. If it's refused
+  // all the same (400): "none" falls back to "minimal", and that to no settings, as before V32.
+  const effort = s.thinking || leastThinking(s.model);
+  const tries: (string | null)[] = [effort, ...(effort === "none" ? ["minimal"] : []), null];
   let response: Response;
   let used: string | null = null;
   try {

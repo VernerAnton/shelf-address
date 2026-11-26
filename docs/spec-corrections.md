@@ -900,3 +900,13 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   had it exactly). If a model refuses "none", it's asked with "minimal", then
   with no settings. No change to the instructions: the owner wants the AI just
   to copy; leftovers like a series number are rare and removed by hand.
+- **V33.7:** V33.6's "none" didn't take: OpenRouter's model list (GET
+  /api/v1/models) says Gemini 3.8 Flash's thinking is **mandatory**, with only
+  high / medium / low accepted — "none" was refused, the step-down sent
+  "minimal" (not on its list either, so in effect "low"), and a book still took
+  15 s with 927 thinking tokens. Now each model is asked for the least it
+  accepts (`lib/ai-models.ts`), with no refused first try: 3.8 Flash "low".
+  Two models added to the phone's dropdown to compare on real books: Gemini
+  3.1 Flash-Lite with thinking **off** (a third of the price), and Gemini 3.6
+  Flash with "minimal". The default stays 3.8 Flash · Nitro until compared.
+  `EXTRACT_THINKING` still overrides, for every model.

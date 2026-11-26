@@ -70,9 +70,9 @@ const t = suite();
     const m = document.querySelector("nav[aria-label=Main]").getBoundingClientRect();
     return s.bottom <= m.top + 1 && m.top - s.bottom < 4 && s.height >= 44;
   }));
-  // Tapped again if the first tap is lost (it can land while the page is still starting up).
+  // Tapped again if the first tap is lost, or can't happen yet (the page can still be starting up).
   for (let i = 0; i < 3 && !/\/extract\/bookops$/.test(page.url()); i++) {
-    await sub.getByRole("link", { name: "BookOps" }).click();
+    await sub.getByRole("link", { name: "BookOps" }).click({ timeout: 15000 }).catch(() => {});
     await page.waitForURL(/\/extract\/bookops$/, { timeout: 10000 }).catch(() => {});
   }
   check("phone: BookOps opens from the row, marked", await visible(page.getByRole("heading", { name: "BookOps" })) && (await current(sub)) === "BookOps" && (await current(main)) === "Extract");
@@ -371,7 +371,7 @@ const t = suite();
   await taking.getByRole("button", { name: /Use the phone's camera app instead/ }).click();
   await (await chooser).setFiles(await cover(page, ["Jännitysromaani."], "#efe6d2"));
   check("…the camera app's photo is used, and the camera closes", await gone(taking, 15000));
-  check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 90000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/)));
+  check("phone: back cover sent; the AI's ISBN gives the title", await visible(phoneList.getByText("Pääkallokehrääjä"), 90000) && await visible(phoneList.getByText(/ISBN 978-951023076-3/), 60000));
   book = await until(() => { const r = rows().at(-1); return rows().length === before + 2 && r.ai_status === "done" && r.lookup_status === "found" ? r : null; }, 60000);
   check("phone: that listing is under Needs photos, front still needed", await visible(page.getByRole("region", { name: "Needs photos" }).getByRole("button", { name: /Pääkallokehrääjä.*Front cover still needed/s }), 15000));
   check("…stored: the photo as the back cover, ISBN read by the AI (10 digits, made 13), title from the database", book && book.back_photo && !book.front_photo && book.isbn13 === "9789510230763" && book.isbn_source === "ai" && book.title_source === "finna" && book.description_source === "ai", JSON.stringify(book ?? { expected: before + 2, rows: rows().slice(-3) }));

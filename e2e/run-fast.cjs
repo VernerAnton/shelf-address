@@ -85,6 +85,9 @@ const results = [];
 let failed = false;
 
 async function worker(k) {
+  // Started a few seconds apart: three servers compiling the app at the same moment made the
+  // first steps of the first suites time out.
+  await sleep(k * 6000);
   const port = 8800 + 10 * k;
   const booksPort = port + 1;
   const base = `http://127.0.0.1:${port}`;

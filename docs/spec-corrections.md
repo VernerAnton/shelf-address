@@ -927,3 +927,10 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   (one book did, every time), the server reads it again with 3.8 Flash · Nitro
   (`FALLBACK_MODEL`), which read that book in full; the phone says so. BookOps
   stays on 3.8 Flash · Nitro: Flash-Lite wasn't tried on its photos.
+- **V33.10:** on the computer the text box is as tall as the To do list
+  beside it (it ended 5rem short — cramped on a wide, not-so-tall screen).
+  The correction status ("Corrections save by themselves" / "Saving…" /
+  "✓ Correction saved") moved from its own line into the button row to make
+  room; with that, list and text box are 1.5rem shorter than the list was, and
+  the page still doesn't scroll (checked at 2560×1000, 1920×1000, 1536×730,
+  1366×768).

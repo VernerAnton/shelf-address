@@ -237,7 +237,7 @@ export function SavedTexts() {
               The heights below allow for both bottom rows: the tabs and Extract's own (BookOps | Text Extract). */}
           <div
             aria-label="Saved texts"
-            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-21rem)] ${text ? "hidden md:flex" : ""}`}
+            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-22.5rem)] ${text ? "hidden md:flex" : ""}`}
           >
             <section aria-label="To do" className="flex min-h-0 flex-col gap-2">
               <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
@@ -285,18 +285,9 @@ export function SavedTexts() {
                     className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
                       // On a wide screen (the page grows with a cover) they fit on one row again.
-                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-28rem)]"
+                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-24.5rem)]"
                     }`}
                   />
-                  <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
-                    {draft?.id === text.id
-                      ? draft.status === "saving"
-                        ? "Saving…"
-                        : draft.status === "saved"
-                          ? "✓ Correction saved. The phone can't change this text any more."
-                          : (draft.error ?? "Couldn't save the correction.")
-                      : "You can correct the text right here — it saves by itself."}
-                  </p>
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
                     <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
                       {copied ? "Copied ✓" : "Copy"}
@@ -326,6 +317,16 @@ export function SavedTexts() {
                         </span>
                       </button>
                     )}
+                    {/* Beside the buttons, not on a line of its own: the text box gets that height (V33.10). */}
+                    <p role="status" aria-label="Correction" className={`col-span-2 self-center text-sm md:min-w-40 md:flex-1 ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
+                      {draft?.id === text.id
+                        ? draft.status === "saving"
+                          ? "Saving…"
+                          : draft.status === "saved"
+                            ? "✓ Correction saved. The phone can't change this text any more."
+                            : (draft.error ?? "Couldn't save the correction.")
+                        : "Corrections save by themselves."}
+                    </p>
                   </div>
                 </div>
 

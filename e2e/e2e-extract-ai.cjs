@@ -153,6 +153,14 @@ const t = suite();
   await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 });
   const lite = (await ai()).requests.at(-1);
   check("Flash-Lite chosen: asked with thinking off", lite.model === "google/gemini-3.1-flash-lite" && lite.reasoning && lite.reasoning.effort === "none", JSON.stringify([lite.model, lite.reasoning]));
+  // A model that stops part-way with an error (V33.8): read again with the default, and the phone says so.
+  await ai("cutoff");
+  await startOver();
+  await take(await cover(page, PHONE_TEXT));
+  check("cut off with an error: read again with the default, the whole text", await page.waitForFunction(() => /miljoona kappaletta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 }).then(() => true, () => false));
+  const pair = (await ai()).requests.slice(-2).map((r) => r.model);
+  check("…first Flash-Lite, then the default", JSON.stringify(pair) === JSON.stringify(["google/gemini-3.1-flash-lite", "google/gemini-3.8-flash:nitro"]), JSON.stringify(pair));
+  check("…and the phone says so", await visible(page.getByText(/Gemini 3\.1 Flash-Lite · no thinking stopped part-way with an error, so Gemini 3\.8 Flash · Nitro read it instead/)));
   await ai("nonone");
   await startOver();
   await take(await cover(page, PHONE_TEXT));

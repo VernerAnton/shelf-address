@@ -282,7 +282,10 @@ function describe(d: AiDetails | null): string {
   const n = (v: number | null) => (v == null ? "?" : v.toLocaleString("en-GB"));
   return [
     `Read by: AI (${d.model})`,
-    `Stopped because: ${d.finishReason ?? "not said"}${d.finishReason === "length" ? " — ran out of room, the end is missing" : ""}`,
+    `Stopped because: ${d.finishReason ?? "not said"}${d.finishReason === "length" ? " — ran out of room, the end is missing" : d.finishReason === "error" ? " — stopped part-way" : ""}${d.nativeFinishReason && d.nativeFinishReason !== d.finishReason ? ` (the model's own reason: ${d.nativeFinishReason})` : ""}${d.error ? ` — "${d.error}"` : ""}`,
+    ...(d.retriedFrom
+      ? [`First tried: ${d.retriedFrom.model}, which stopped with an error after ${(d.retriedFrom.ms / 1000).toFixed(1)} s (${d.retriedFrom.nativeFinishReason ?? "no reason given"}${d.retriedFrom.error ? `: "${d.retriedFrom.error}"` : ""}); then read by the default`]
+      : []),
     `Tokens: photo and instructions ${n(d.promptTokens)}, answer ${n(d.answerTokens)} of at most ${n(d.maxTokens)}${d.thinkingTokens != null ? ` (thinking ${n(d.thinkingTokens)})` : ""}`,
     `AI took: ${(d.ms / 1000).toFixed(1)} s${d.provider ? `, served by ${d.provider}` : ""}${d.thinking ? `, thinking: ${d.thinking}` : ""}`,
   ].join("\n");

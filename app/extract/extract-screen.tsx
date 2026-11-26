@@ -61,7 +61,8 @@ type LastRead = {
 };
 
 /** The model stopped because it ran out of room: the end is missing. */
-const stoppedEarly = (d: AiDetails | null) => d?.finishReason === "length";
+/** The model stopped before the end: out of room, or with an error part-way (V33.8). */
+const stoppedEarly = (d: AiDetails | null) => d?.finishReason === "length" || d?.finishReason === "error";
 
 /** The front cover, made 1600 px on its long side for the computer. */
 async function forCover(file: File): Promise<Blob> {
@@ -106,7 +107,10 @@ function reportText(last: LastRead, note: string): string {
     last.readBy === "ai" && d
       ? [
           `Read by: AI (${d.model})`,
-          `Stopped because: ${d.finishReason ?? "not said"}${stoppedEarly(d) ? " — ran out of room, the end is missing" : ""}`,
+          `Stopped because: ${d.finishReason ?? "not said"}${d.finishReason === "length" ? " — ran out of room, the end is missing" : d.finishReason === "error" ? " — stopped part-way" : ""}${d.nativeFinishReason && d.nativeFinishReason !== d.finishReason ? ` (the model's own reason: ${d.nativeFinishReason})` : ""}${d.error ? ` — "${d.error}"` : ""}`,
+          ...(d.retriedFrom
+            ? [`First tried: ${d.retriedFrom.model}, which stopped with an error after ${(d.retriedFrom.ms / 1000).toFixed(1)} s (${d.retriedFrom.nativeFinishReason ?? "no reason given"}${d.retriedFrom.error ? `: "${d.retriedFrom.error}"` : ""}); then read by the default`]
+            : []),
           `Tokens: photo and instructions ${n(d.promptTokens)}, answer ${n(d.answerTokens)} of at most ${n(d.maxTokens)}${d.thinkingTokens != null ? ` (thinking ${n(d.thinkingTokens)})` : ""}`,
           `AI took: ${(d.ms / 1000).toFixed(1)} s${d.provider ? `, served by ${d.provider}` : ""}${d.thinking ? `, thinking: ${d.thinking}` : ""}`,
         ].join("\n")
@@ -486,7 +490,12 @@ export function ExtractScreen() {
       setNote(
         early
           ? { kind: "warn", text: "The AI stopped early — the end of the text may be missing. Take another photo of the rest." }
-          : why
+          : details?.retriedFrom
+            ? {
+                kind: "warn",
+                text: `${modelLabel(details.retriedFrom.model)} stopped part-way with an error, so ${modelLabel(details.requested ?? details.model)} read it instead.`,
+              }
+            : why
             ? { kind: "warn", text: `The AI couldn't read it (${why}), so the phone did — check the text carefully.` }
             : confidence !== null && confidence < SHAKY
               ? { kind: "warn", text: "Parts of this may be read wrong — check it before using it. A sharper, flatter, better-lit photo helps." }

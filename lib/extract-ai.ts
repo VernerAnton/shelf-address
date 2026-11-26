@@ -170,20 +170,40 @@ export type AiDetails = {
   thinking?: string;
   /** The model as asked for (V33.5): OpenRouter names the same model for ":nitro" and standard. */
   requested?: string;
+  /** The model's own stop reason, and the error it gave (V33.8), when it stopped with one. */
+  nativeFinishReason?: string | null;
+  error?: string | null;
+  /** Read again with the default after this model stopped with an error (V33.8). */
+  retriedFrom?: { model: string; error: string | null; nativeFinishReason: string | null; ms: number } | null;
   provider?: string | null;
 };
 
 type ChatBody = {
   model?: string;
   provider?: string;
-  choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown } }[];
+  choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown }; error?: { message?: string; code?: unknown } }[];
+  error?: { message?: string; code?: unknown; metadata?: unknown };
   usage?: { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
 };
 
 const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /** Transcribes a back-cover photo (JPEG bytes) with the vision model. */
+/**
+ * Transcribes a back-cover photo. A chosen model that stops with an error
+ * part-way (V33.8: Flash-Lite and 3.6 Flash both did, two thirds in) is
+ * retried once with the default, so a cut-off text never arrives unannounced.
+ */
 export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
+  const first = await readOnce(photo, type, chosen);
+  const configured = (await settings()).model;
+  if (first.details.finishReason !== "error" || first.details.requested === configured) return first;
+  const second = await readOnce(photo, type, null);
+  const d = first.details;
+  return { ...second, details: { ...second.details, retriedFrom: { model: d.requested ?? d.model, error: d.error ?? null, nativeFinishReason: d.nativeFinishReason ?? null, ms: d.ms } } };
+}
+
+async function readOnce(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
   const configured = await settings();
   // A model the phone chose (V33.4), if it's one of ours; otherwise the default.
   const s = isAllowedModel(chosen) ? { ...configured, model: chosen } : configured;
@@ -262,6 +282,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
       thinking: used ?? "model's default (settings refused)",
       provider: typeof body?.provider === "string" ? body.provider : null,
       finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,
+      nativeFinishReason: choice?.native_finish_reason ?? null,
+      error: (choice?.error?.message ?? body?.error?.message ?? null)?.slice(0, 500) ?? null,
       promptTokens: count(body?.usage?.prompt_tokens),
       answerTokens: count(body?.usage?.completion_tokens),
       thinkingTokens: count(body?.usage?.completion_tokens_details?.reasoning_tokens),

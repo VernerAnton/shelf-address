@@ -11,7 +11,8 @@
 //   POST /__ai?mode=ok|limit|badkey|slow|length|delay|picky   how it answers next (default ok;
 //                                          length: stops early, out of room; delay: 3 s;
 //                                          picky: refuses the reasoning setting;
-//                                          nonone: refuses only effort "none")
+//                                          nonone: refuses only effort "none";
+//                                          cutoff: stops part-way with an error, all but the default)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
 // BookOps asks the same stand-in (x-title "Shelf-Address BookOps") and gets JSON back:
 //   POST /__ai?book=plain|isbn|badisbn|garbage   what it "reads" next (default plain:
@@ -113,6 +114,14 @@ async function chat(req, res) {
   }
   if (aiMode === "delay") await new Promise((r) => setTimeout(r, 3000)); // a slow but fine answer
   if (aiMode === "picky" && body.reasoning) return json(res, 400, { error: { message: "Reasoning is mandatory / unsupported for this model" } });
+  // Stops part-way with an error, as Flash-Lite and 3.6 Flash did in the shop (all but the default).
+  if (aiMode === "cutoff" && body.model !== "google/gemini-3.8-flash:nitro") {
+    return json(res, 200, {
+      model: body.model,
+      provider: "Google AI Studio",
+      choices: [{ finish_reason: "error", native_finish_reason: "RECITATION", error: { message: "Model stopped: recitation", code: 502 }, message: { role: "assistant", content: AI_TEXT.split(" ").slice(0, 6).join(" ") } }],
+    });
+  }
   if (aiMode === "nonone" && body.reasoning?.effort === "none") return json(res, 400, { error: { message: "Reasoning is mandatory for this model" } });
   const usage = (answer, thinking) => ({ prompt_tokens: 1290, completion_tokens: answer, completion_tokens_details: { reasoning_tokens: thinking } });
   if (aiMode === "length") {

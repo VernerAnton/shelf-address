@@ -910,3 +910,14 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   3.1 Flash-Lite with thinking **off** (a third of the price), and Gemini 3.6
   Flash with "minimal". The default stays 3.8 Flash · Nitro until compared.
   `EXTRACT_THINKING` still overrides, for every model.
+- **V33.8:** Flash-Lite and 3.6 Flash stopped part-way with an error on one
+  book (*Sijoita asuntoihin!*) — 5 times out of 5, always at the same place
+  (~770 characters) — while 3.8 Flash read it in full and both read another
+  book in full. Not tokens (the other book's answer was three times longer);
+  most likely Google's recitation check on a blurb that's online word for
+  word. The app had shown the cut-off text without a word. Now: a reading that
+  stops with an error (`finish_reason: "error"`) is read again once with the
+  default model, and the phone says "Flash-Lite stopped part-way with an
+  error, so Gemini 3.8 Flash read it instead"; if the default stops too, the
+  "end may be missing" warning shows. Each reading keeps the model's own stop
+  reason (`native_finish_reason`) and error message, and reports show them.

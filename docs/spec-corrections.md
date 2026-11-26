@@ -863,3 +863,113 @@ migrations are applied and don't touch the same tables.
 - **Undo last change** puts back the picture as it was before the last turn
   or edit (one step). Copy picture, Download picture and the full-size view
   show the newest picture at once.
+- **V33.3:** the corner magnifier goes below the finger when there's no room
+  above it (the top corners), and stays inside the picture sideways — in
+  Sections' cover camera too, as it's the same editor. Corner handles on the
+  picture's very edge show whole (the editor leaves room around the picture),
+  so they're easy to grab. Quick taps on ↺ / ↻ all count now: each turn waits
+  for the one before and starts from the newest picture (before, two quick
+  taps could both start from the same picture, losing a turn).
+
+## 34. Choosing the AI model on the phone (V33.4).
+
+To compare models on real covers (the owner found Grok 4.20 on OpenRouter:
+$1.25/$2.50 per million tokens, ~0.55–0.66 s to the first word, ~85–98
+tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
+
+- Under Report a problem, a small **AI model** dropdown: Gemini 3.8 Flash
+  (default) or Grok 4.20. Kept per phone (localStorage `extract:model`).
+- The phone sends its choice as `X-Model`; the server uses it only if it's on
+  the list in `lib/ai-models.ts`, so nothing else can be chosen to spend on.
+  The speed settings (§29) go with it; if a model refuses them, the plain
+  retry applies.
+- The phone's line says "Read by AI (Grok 4.20) in 4.9 s"; the computer's
+  "read by AI (Grok 4.20) in 4.1 s"; reports name the model, as before.
+- **V33.5:** Grok 4.20 was tried in the shop and was about half as fast as
+  Gemini; it's off the list. The default is now `google/gemini-3.8-flash:nitro`
+  — OpenRouter picks the fastest endpoints, Google's priority tier included
+  (dearer, still well under a cent a cover); with it no `provider.sort` of our
+  own is sent. "Gemini 3.8 Flash · standard" stays in the dropdown to compare.
+  Each reading records the model as asked for (`requested`), since OpenRouter
+  names the same model for both. BookOps reads with the same default.
+- **V33.6:** thinking **off** (`effort: "none"`). The shop noticed the same
+  book read twice in a row took 13.5 s and then 6.4 s: "minimal" still lets
+  Gemini think when it judges a photo hard (1,568 thinking tokens there). The
+  thinking reading was also *less* accurate: it wrote "Viestin sisältävän"
+  where the cover prints "Viestiin sisältyvän" (the reading without thinking
+  had it exactly). If a model refuses "none", it's asked with "minimal", then
+  with no settings. No change to the instructions: the owner wants the AI just
+  to copy; leftovers like a series number are rare and removed by hand.
+- **V33.7:** V33.6's "none" didn't take: OpenRouter's model list (GET
+  /api/v1/models) says Gemini 3.8 Flash's thinking is **mandatory**, with only
+  high / medium / low accepted — "none" was refused, the step-down sent
+  "minimal" (not on its list either, so in effect "low"), and a book still took
+  15 s with 927 thinking tokens. Now each model is asked for the least it
+  accepts (`lib/ai-models.ts`), with no refused first try: 3.8 Flash "low".
+  Two models added to the phone's dropdown to compare on real books: Gemini
+  3.1 Flash-Lite with thinking **off** (a third of the price), and Gemini 3.6
+  Flash with "minimal". The default stays 3.8 Flash · Nitro until compared.
+  `EXTRACT_THINKING` still overrides, for every model.
+- **V33.8:** Flash-Lite and 3.6 Flash stopped part-way with an error on one
+  book (*Sijoita asuntoihin!*) — 5 times out of 5, always at the same place
+  (~770 characters) — while 3.8 Flash read it in full and both read another
+  book in full. Not tokens (the other book's answer was three times longer);
+  most likely Google's recitation check on a blurb that's online word for
+  word. The app had shown the cut-off text without a word. Now: a reading that
+  stops with an error (`finish_reason: "error"`) is read again once with the
+  default model, and the phone says "Flash-Lite stopped part-way with an
+  error, so Gemini 3.8 Flash read it instead"; if the default stops too, the
+  "end may be missing" warning shows. Each reading keeps the model's own stop
+  reason (`native_finish_reason`) and error message, and reports show them.
+- **V33.9 (the owner's choice after comparing in the shop):** Gemini 3.1
+  Flash-Lite, thinking off, is the default: about 4–6 s, as accurate as 3.8
+  Flash on the books compared, a third of the price. If it stops part-way
+  (one book did, every time), the server reads it again with 3.8 Flash · Nitro
+  (`FALLBACK_MODEL`), which read that book in full; the phone says so. BookOps
+  stays on 3.8 Flash · Nitro: Flash-Lite wasn't tried on its photos.
+- **V33.10:** on the computer the text box is as tall as the To do list
+  beside it (it ended 5rem short — cramped on a wide, not-so-tall screen).
+  The correction status ("Corrections save by themselves" / "Saving…" /
+  "✓ Correction saved") moved from its own line into the button row to make
+  room; with that, list and text box are 1.5rem shorter than the list was, and
+  the page still doesn't scroll (checked at 2560×1000, 1920×1000, 1536×730,
+  1366×768).
+
+## 35. ISBN on the phone, copied on the computer (V34).
+
+The owner's idea: some books have no barcode, and the ISBN is needed in the
+listing.
+
+- **Phone:** "Add another photo" (nobody used it) is replaced by a **green ISBN
+  button** with an **ISBN field** beside it, clearly apart from the back-cover
+  text. The green is the accent blue's strength and lightness in green's hue
+  (`--isbn`). Tapping ISBN opens the camera; the number appears in the field:
+  from the **barcode**, read on the phone (exact, instant), or else a
+  **printed ISBN**, read by the AI on its own (`POST /api/extract/isbn`:
+  Flash-Lite, no thinking, digits only) — checked with the ISBN check digit
+  either way. The field can be typed in or corrected; it's saved once it's a
+  valid ISBN. The **back-cover photo** is searched for an ISBN too, alongside
+  the reading (no extra wait, and the text's instructions are unchanged), if
+  the field is still empty.
+- The ISBN is saved with the text (`saved_texts.isbn`, `isbn_source` —
+  migration 0013), also on its own if there's no text yet, and also after the
+  text was corrected on the computer. Earlier texts on the phone keep theirs.
+- **Computer:** "Mark done" (nobody used it) is replaced by a **green ISBN
+  button** showing the number; a click copies it. "No ISBN" when there's none.
+- **V34.1:** the ISBN button (a 13-digit number) is wider than Mark done
+  was, so the button row wrapped on some screens. The correction status moved
+  into the text box's bottom corner (no line of its own), the ISBN number is a
+  size smaller, and beside a cover the text column gets 2rem more (the
+  cover's width budget is 68rem, was 66rem).
+- **V34.2:** Download picture opens the "Save as" window (Edge and Chrome:
+  `showSaveFilePicker`), so the picture goes straight into the folder kept for
+  covers; the browser opens that folder again next time (`id: "front-covers"`).
+  Browsers without it download as before.
+- **V34.3:** no words inside the text box: a turning ↻ while a correction
+  saves and ✓ once saved, just under the box's bottom-right corner, outside
+  it (words for screen readers, and for errors).
+- **V34.4:** the line above the text shows just the times ("26.11. klo 08.58 ·
+  changed 26.11. klo 09.17"); who read it, how long it took, corrections and
+  the front cover are in its hover text — it had wrapped onto two lines and
+  pushed the text box down. A text read by the phone's own reader still says
+  so in red ("check it"). The save icons explain themselves on hover too.

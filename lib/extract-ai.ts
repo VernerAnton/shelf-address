@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { getDb, getEnv } from "@/lib/cloudflare";
 import { tidyAiText } from "@/lib/extract-text";
+import { FALLBACK_MODEL, isAllowedModel, leastThinking } from "@/lib/ai-models";
 
 /**
  * Extract's AI reading (docs/spec-corrections.md §23): a back-cover photo is
@@ -15,13 +16,15 @@ import { tidyAiText } from "@/lib/extract-text";
  *                        limit on the key), not here.
  *   EXTRACT_MODEL        optional: another OpenRouter model id.
  *   EXTRACT_THINKING     optional: how much the model may think before it
- *                        answers — minimal (default, V32), low, medium, high,
- *                        or none. Copying text needs little thinking, and
+ *                        answers — none, minimal, low, medium, high. Unset
+ *                        (the usual): the least each model accepts (V33.7,
+ *                        lib/ai-models.ts). Copying text needs little thinking, and
  *                        thinking was most of the wait (§29).
  *   OPENROUTER_BASE      optional: tests point it at a local stand-in.
  */
 
-export const DEFAULT_MODEL = "google/gemini-3.8-flash";
+export { DEFAULT_MODEL } from "@/lib/ai-models";
+import { DEFAULT_MODEL } from "@/lib/ai-models";
 const OPENROUTER = "https://openrouter.ai/api/v1";
 export const COOKIE = "extract_login";
 const TOKEN_PURPOSE = "shelf-address extract login v1";
@@ -57,7 +60,7 @@ export async function settings(): Promise<Settings> {
     code: env.EXTRACT_CODE?.trim() || null,
     key: env.OPENROUTER_API_KEY?.trim() || null,
     model: env.EXTRACT_MODEL?.trim() || DEFAULT_MODEL,
-    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "minimal",
+    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "",
     base: (env.OPENROUTER_BASE?.trim() || OPENROUTER).replace(/\/$/, ""),
   };
 }
@@ -165,21 +168,45 @@ export type AiDetails = {
   ms: number;
   /** How much thinking was allowed (V32), and who at OpenRouter served it, if it says. */
   thinking?: string;
+  /** The model as asked for (V33.5): OpenRouter names the same model for ":nitro" and standard. */
+  requested?: string;
+  /** The model's own stop reason, and the error it gave (V33.8), when it stopped with one. */
+  nativeFinishReason?: string | null;
+  error?: string | null;
+  /** Read again with the default after this model stopped with an error (V33.8). */
+  retriedFrom?: { model: string; error: string | null; nativeFinishReason: string | null; ms: number } | null;
   provider?: string | null;
 };
 
 type ChatBody = {
   model?: string;
   provider?: string;
-  choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown } }[];
+  choices?: { finish_reason?: string | null; native_finish_reason?: string | null; message?: { content?: unknown }; error?: { message?: string; code?: unknown } }[];
+  error?: { message?: string; code?: unknown; metadata?: unknown };
   usage?: { prompt_tokens?: number; completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } };
 };
 
 const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /** Transcribes a back-cover photo (JPEG bytes) with the vision model. */
-export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ text: string; details: AiDetails }> {
-  const s = await settings();
+/**
+ * Transcribes a back-cover photo. A chosen model that stops with an error
+ * part-way (V33.8: Flash-Lite and 3.6 Flash both did, two thirds in) is
+ * retried once with 3.8 Flash · Nitro (V33.9), so a cut-off text never
+ * arrives unannounced.
+ */
+export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
+  const first = await readOnce(photo, type, chosen);
+  if (first.details.finishReason !== "error" || first.details.requested === FALLBACK_MODEL) return first;
+  const second = await readOnce(photo, type, FALLBACK_MODEL);
+  const d = first.details;
+  return { ...second, details: { ...second.details, retriedFrom: { model: d.requested ?? d.model, error: d.error ?? null, nativeFinishReason: d.nativeFinishReason ?? null, ms: d.ms } } };
+}
+
+async function readOnce(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
+  const configured = await settings();
+  // A model the phone chose (V33.4), if it's one of ours; otherwise the default.
+  const s = isAllowedModel(chosen) ? { ...configured, model: chosen } : configured;
   if (!s.key) throw new ExtractError("AI reading isn't set up yet.", 503, "fallback");
   if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new ExtractError("That isn't a photo.", 415, "fallback");
   if (photo.byteLength === 0 || photo.byteLength > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");
@@ -187,7 +214,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
   // Node's Buffer (nodejs_compat): native base64, a few hundred KB in well under a millisecond of CPU.
   const dataUrl = `data:${type};base64,${Buffer.from(photo).toString("base64")}`;
   const started = Date.now();
-  const ask = (tuned: boolean) =>
+  // effort: how much thinking to allow; null sends no thinking or routing settings at all.
+  const ask = (effort: string | null) =>
     fetch(`${s.base}/chat/completions`, {
       method: "POST",
       headers: {
@@ -200,11 +228,14 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
         model: s.model,
         temperature: 0,
         max_tokens: MAX_TOKENS,
-        ...(tuned && {
-          // Thinking was 70–80% of what the model produced, and most of the wait; copying text needs little (V32).
-          reasoning: { effort: s.thinking },
+        ...(effort && {
+          // Thinking was 70–80% of what the model produced, and most of the wait (V32). Off since V33.6: a
+          // reading with thinking was twice as slow and "improved" the wording ("Viestin sisältävän" for the
+          // printed "Viestiin sisältyvän"); without it the copy was exact. We want a copy, not reasoning.
+          reasoning: { effort },
           // Of the providers serving the model, the one answering fastest right now (V32).
-          provider: { sort: "latency" },
+          // (":nitro" does its own sorting — by speed, with the priority tier — so not with it.)
+          ...(!s.model.endsWith(":nitro") && { provider: { sort: "latency" } }),
         }),
         messages: [
           {
@@ -218,15 +249,18 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
       }),
       signal: AbortSignal.timeout(Math.max(1000, AI_TIMEOUT_MS - (Date.now() - started))),
     });
+  // The least thinking this model accepts (V33.7), unless EXTRACT_THINKING says otherwise. If it's refused
+  // all the same (400): "none" falls back to "minimal", and that to no settings, as before V32.
+  const effort = s.thinking || leastThinking(s.model);
+  const tries: (string | null)[] = [effort, ...(effort === "none" ? ["minimal"] : []), null];
   let response: Response;
-  let tuned = true;
+  let used: string | null = null;
   try {
-    response = await ask(true);
-    // Refused as asked (a model that won't take these settings, say): once more, plain, as before V32.
-    if (response.status === 400) {
-      console.error("AI refused the speed settings:", (await response.text().catch(() => "")).slice(0, 300));
-      tuned = false;
-      response = await ask(false);
+    for (;;) {
+      used = tries.shift() ?? null;
+      response = await ask(used);
+      if (response.status !== 400 || !tries.length) break;
+      console.error(`AI refused thinking "${used}":`, (await response.text().catch(() => "")).slice(0, 300));
     }
   } catch {
     throw new ExtractError("The AI didn't answer in time.", 504, "fallback");
@@ -244,9 +278,12 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
     text: tidyAiText(text),
     details: {
       model: typeof body?.model === "string" ? body.model : s.model,
-      thinking: tuned ? s.thinking : "model's default (settings refused)",
+      requested: s.model,
+      thinking: used ?? "model's default (settings refused)",
       provider: typeof body?.provider === "string" ? body.provider : null,
       finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,
+      nativeFinishReason: choice?.native_finish_reason ?? null,
+      error: (choice?.error?.message ?? body?.error?.message ?? null)?.slice(0, 500) ?? null,
       promptTokens: count(body?.usage?.prompt_tokens),
       answerTokens: count(body?.usage?.completion_tokens),
       thinkingTokens: count(body?.usage?.completion_tokens_details?.reasoning_tokens),
@@ -254,4 +291,54 @@ export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ te
       ms: Date.now() - started,
     },
   };
+}
+
+/** What the model is asked for an ISBN (V34): the number only — kept apart from the text's instructions. */
+const ISBN_INSTRUCTIONS = `This is a photo of part of a book (usually its back cover).
+Find the book's ISBN: printed after "ISBN", or the digits under the barcode.
+Answer with the ISBN's digits only (10 or 13 digits; an X may end a 10-digit one), nothing else.
+If there is no ISBN in the photo, answer NONE.`;
+
+/**
+ * The book's ISBN in a photo, read by the AI on its own (V34): for a printed
+ * ISBN the phone's barcode reader can't see. Gemini 3.1 Flash-Lite, no
+ * thinking: a short answer, about 2 seconds. Returns the raw answer (the
+ * caller checks it with the ISBN check digit) and how long it took.
+ */
+export async function readIsbnWithAi(photo: ArrayBuffer, type: string): Promise<{ answer: string; ms: number }> {
+  const s = await settings();
+  if (!s.key) throw new ExtractError("AI reading isn't set up yet.", 503, "fallback");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new ExtractError("That isn't a photo.", 415, "fallback");
+  if (photo.byteLength === 0 || photo.byteLength > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");
+  const started = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(`${s.base}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${s.key}`, "content-type": "application/json", "x-title": "Shelf-Address Extract ISBN" },
+      body: JSON.stringify({
+        model: "google/gemini-3.1-flash-lite",
+        temperature: 0,
+        max_tokens: 60,
+        reasoning: { effort: "none" },
+        provider: { sort: "latency" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: ISBN_INSTRUCTIONS },
+              { type: "image_url", image_url: { url: `data:${type};base64,${Buffer.from(photo).toString("base64")}` } },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new ExtractError("The AI didn't answer in time.", 504, "fallback");
+  }
+  if (!response.ok) throw new ExtractError(`The AI couldn't read it (${response.status}).`, 502, "fallback");
+  const body = (await response.json().catch(() => null)) as ChatBody | null;
+  const content = body?.choices?.[0]?.message?.content;
+  return { answer: typeof content === "string" ? content.trim().slice(0, 100) : "", ms: Date.now() - started };
 }

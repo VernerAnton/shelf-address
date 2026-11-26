@@ -44,6 +44,13 @@ const t = suite();
   const page = await phone(b, t, { permissions: ["camera", "clipboard-read", "clipboard-write"] });
   // The computer: a desktop-sized window, its own browser session.
   const pcCtx = await b.newContext({ baseURL: BASE_URL, viewport: { width: 1280, height: 860 }, acceptDownloads: true, permissions: ["clipboard-read", "clipboard-write"] });
+  // The "Save as" window (V34.2), recorded instead of opened: what it was asked, and what was written.
+  await pcCtx.addInitScript(() => {
+    window.__saveAs = [];
+    window.showSaveFilePicker = async (options) => ({
+      createWritable: async () => ({ write: async (blob) => window.__saveAs.push({ options, bytes: blob.size, type: blob.type }), close: async () => {} }),
+    });
+  });
   const pc = await pcCtx.newPage();
   pc.setDefaultTimeout(20000);
   pc.on("pageerror", (e) => t.errors.push(String(e)));
@@ -143,13 +150,13 @@ const t = suite();
     const text = document.querySelector("[aria-label='Selected text'] textarea").getBoundingClientRect();
     return { beside: img.left >= text.right, tall: img.height, textTall: text.height, whole: document.querySelector("figure img").naturalWidth > 0 };
   });
-  check("…beside the text, big enough to judge (held to what the text's width can spare)", placed.beside && placed.whole && placed.tall >= 300, JSON.stringify(placed));
+  check("…beside the text, big enough to judge (held to what the text's width can spare)", placed.beside && placed.whole && placed.tall >= 260, JSON.stringify(placed));
   check("…and a small one in the list", (await list.getByRole("button").first().locator("img").count()) === 1 && (await list.getByRole("button").last().locator("img").count()) === 0);
   // A big screen (like the shop's, 1536×730 in the browser): the page grows to use the width (V28).
   await pc.setViewportSize({ width: 1536, height: 730 });
   await sleep(300);
   const wide = await pc.evaluate(() => {
-    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
+    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|No ISBN|ISBN copied ✓|97[89]-\d{9}-\d|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
     return { main: document.querySelector("main").getBoundingClientRect().width, rows: new Set(tops).size, scroll: document.documentElement.scrollHeight - innerHeight, cover: document.querySelector("figure img").getBoundingClientRect().height };
   });
   check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 360, JSON.stringify(wide)); // 360: Extract has two bottom rows since V33
@@ -159,7 +166,7 @@ const t = suite();
     await pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: /^(Copy|Copied ✓)$/ }).click();
     await sleep(300);
     const after = await pc.evaluate(() => {
-      const btns = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim()));
+      const btns = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|No ISBN|ISBN copied ✓|97[89]-\d{9}-\d|Delete|Report a ?problem)$/.test(x.textContent.trim()));
       return { n: btns.length, rows: new Set(btns.map((x) => Math.round(x.getBoundingClientRect().top))).size, copied: btns.some((x) => x.textContent.includes("Copied")) };
     });
     check(`${w}×${h}: after Copy, the buttons stay on one row`, after.n === 4 && after.rows === 1 && after.copied, JSON.stringify(after));
@@ -167,10 +174,11 @@ const t = suite();
   await pc.setViewportSize({ width: 1280, height: 860 });
   await figure.getByRole("button", { name: "Copy picture" }).click();
   check("Copy picture puts the picture on the clipboard", await visible(figure.getByRole("button", { name: "Picture copied ✓" })) && (await pc.evaluate(async () => (await navigator.clipboard.read())[0].types)).includes("image/png"));
-  const picFile = pc.waitForEvent("download");
-  await figure.getByRole("link", { name: "Download picture" }).click();
-  const saved = await picFile;
-  check("Download picture: a .jpg named after the book", /^etukansi-vaino-linnan-romaani.*\.jpg$/.test(saved.suggestedFilename()), saved.suggestedFilename());
+  await figure.getByRole("button", { name: "Download picture" }).click();
+  check("Download picture: the Save as window, so a folder can be chosen", await visible(figure.getByRole("button", { name: "Saved ✓" })));
+  const saveAs = (await pc.evaluate(() => window.__saveAs))[0];
+  check("…a .jpg named after the book, the picture itself written", saveAs && /^etukansi-vaino-linnan-romaani.*\.jpg$/.test(saveAs.options.suggestedName) && saveAs.bytes > 10000 && saveAs.type === "image/jpeg", JSON.stringify(saveAs));
+  check("…and the folder remembered for next time (the same id each time)", saveAs && saveAs.options.id === "front-covers", JSON.stringify(saveAs && saveAs.options));
   await figure.getByRole("img", { name: "Front cover" }).click();
   const full = pc.getByRole("dialog", { name: "Front cover, full size" });
   check("click: full size", await visible(full));
@@ -179,7 +187,8 @@ const t = suite();
   check("no Download .txt any more", (await pc.getByRole("button", { name: "Download .txt" }).count()) === 0);
 
   // V33.1: how long the AI took, and a small picture editor — rotate, crop, undo.
-  check("computer: says how long the AI took", /read by AI in \d+\.\d s/.test(await pc.getByRole("region", { name: "Selected text" }).locator("p").first().innerText()));
+  const about = pc.getByRole("region", { name: "Selected text" }).getByLabel("About this text");
+  check("computer: just the times on the line; on hover, which model read it and how long it took (V34.4)", !/read by/i.test(await about.innerText()) && /^Read by AI \(Gemini 3\.1 Flash-Lite · no thinking\) in \d+\.\d s/.test(await about.getAttribute("title")), JSON.stringify([await about.innerText(), await about.getAttribute("title")]));
   const coverSize = async () => jpegSize(await (await pc.request.get(`/api/extract/texts/${newest.id}/cover`)).body());
   const waitForSize = async (want) => {
     for (let i = 0; i < 20; i++) { const got = await coverSize(); if (want(got)) return got; await sleep(300); }
@@ -223,17 +232,25 @@ const t = suite();
   await visible(editor.getByRole("button", { name: "Top-left corner" }));
   await sleep(1500); // let the edge-finding finish
   await inside.getByRole("button", { name: "Whole picture" }).click();
+  // Crop to the middle: every corner dragged 20% in (one corner alone only tilts the shape,
+  // and straightening that keeps the longest edges' full size).
   const frame = await editorImg.boundingBox();
-  const handle = editor.getByRole("button", { name: "Top-left corner" });
-  const hb = await handle.boundingBox();
-  await pc.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
-  await pc.mouse.down();
-  await pc.mouse.move(frame.x + frame.width * 0.35, frame.y + frame.height * 0.35, { steps: 8 });
-  await pc.mouse.up();
+  for (const [name, fx, fy] of [["Top-left", 0.2, 0.2], ["Top-right", 0.8, 0.2], ["Bottom-right", 0.8, 0.8], ["Bottom-left", 0.2, 0.8]]) {
+    const hb = await editor.getByRole("button", { name: `${name} corner` }).boundingBox();
+    await pc.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await pc.mouse.down();
+    await pc.mouse.move(frame.x + frame.width * fx, frame.y + frame.height * fy, { steps: 8 });
+    if (name === "Top-left") {
+      // V33.3: near the top the magnifier goes below the finger, inside the picture — not off its top.
+      const loupe = await editor.locator("[aria-hidden][style*='background-image']").boundingBox();
+      check("magnifier on a top corner: below the finger, inside the picture", loupe && loupe.y >= frame.y - 1 && loupe.y > frame.y + frame.height * fy && loupe.x >= frame.x - 1, JSON.stringify({ loupe, frame }));
+    }
+    await pc.mouse.up();
+  }
   await editor.getByRole("button", { name: "Save picture" }).click();
   check("Save picture: the editor closes", await editor.waitFor({ state: "detached", timeout: 15000 }).then(() => true, () => false));
-  const cropped = await waitForSize((z) => z && z.width < tall.width * 0.85);
-  check("…and the picture is cropped to the corners", cropped && cropped.width < tall.width * 0.85 && cropped.height < tall.height * 0.85 && cropped.width > tall.width * 0.4, JSON.stringify([tall, cropped]));
+  const cropped = await waitForSize((z) => z && z.width < tall.width * 0.8);
+  check("…and the picture is cropped to the corners (about 60% each way)", cropped && Math.abs(cropped.width / tall.width - 0.6) < 0.06 && Math.abs(cropped.height / tall.height - 0.6) < 0.06, JSON.stringify([tall, cropped]));
   await tools.getByRole("button", { name: "Undo last change" }).click();
   const undone = await waitForSize((z) => z && z.width === tall.width);
   check("Undo last change: the whole picture is back", undone && undone.width === tall.width && undone.height === tall.height, JSON.stringify(undone));
@@ -284,19 +301,19 @@ const t = suite();
   check("…and the computer's version is kept", rows().some((r) => r.text.includes("Koneella lisätty")) && !rows().some((r) => r.text.includes("Puhelimella lisätty")));
   await list.getByRole("button").last().click();
 
-  // Done, not done, delete.
-  check("two texts to do, no Done section yet", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
-  await pc.getByRole("button", { name: "✓ Mark done" }).click();
-  const doneSection = pc.getByRole("region", { name: "Done" });
-  check("Mark done: moves it down to the Done section", await visible(doneSection.getByRole("button", { name: /Väinö/ })) && await visible(pc.getByRole("heading", { name: "To do (1)" })));
-  check("…and the next text to do opens", (await pc.getByRole("region", { name: "To do" }).getByRole("button").first().getAttribute("aria-current")) === "true");
-  await sleep(1000);
-  check("…stored", rows().filter((r) => r.done_at).length === 1);
-  await doneSection.getByRole("button").first().click();
-  await pc.getByRole("button", { name: "Not done" }).click();
-  check("Not done: back up to To do", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
-  await sleep(1000);
-  check("Not done undoes it", rows().every((r) => !r.done_at));
+  // V34: the ISBN button in place of Mark done — the number, copied with a click.
+  check("no Mark done any more", (await pc.getByRole("button", { name: /Mark done/ }).count()) === 0);
+  const selectedId = rows().find((r) => r.text.includes("rakastettu"))?.id ?? rows()[0].id;
+  sql(`UPDATE saved_texts SET isbn = NULL WHERE id = '${selectedId}'`);
+  await pc.reload();
+  await list.getByRole("button").last().click();
+  const isbnBtn = pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: /ISBN/ });
+  check("no ISBN yet: the ISBN button says so, and can't be pressed", (await isbnBtn.innerText()) === "No ISBN" && await isbnBtn.isDisabled(), await isbnBtn.innerText());
+  sql(`UPDATE saved_texts SET isbn = '9789510230763', isbn_source = 'barcode'`);
+  await sleep(6000); // the list refreshes itself
+  check("with an ISBN: shown on the button", (await isbnBtn.innerText()) === "978-951023076-3", await isbnBtn.innerText());
+  await isbnBtn.click();
+  check("…a click copies it", await visible(pc.getByRole("button", { name: /Copy ISBN/ }).getByText("ISBN copied ✓")) && (await pc.evaluate(() => navigator.clipboard.readText())) === "9789510230763");
   pc.once("dialog", (d) => d.accept());
   await pc.getByRole("button", { name: "Delete" }).click();
   await sleep(1000);

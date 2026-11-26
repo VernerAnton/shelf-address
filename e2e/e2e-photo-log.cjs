@@ -46,7 +46,7 @@ const TWO = ["Otava 2010", "ISBN 978-951-0-23076-3 (sid.)", "ISBN 978-951-0-3668
 (async () => {
   const errors = [];
   const browser = await chromium.launch({ args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788", permissions: ["camera"] });
+  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788", permissions: ["camera"] });
   await ctx.route("https://www.antikvaari.fi/**", (r) => r.fulfill({ contentType: "text/html", body: "<h1>stand-in</h1>" }));
   // Keep hold of the text reader's workers, to kill one later.
   await ctx.addInitScript(() => {

@@ -10,7 +10,9 @@
 // tests never reach the real AI or spend anything:
 //   POST /__ai?mode=ok|limit|badkey|slow|length|delay|picky   how it answers next (default ok;
 //                                          length: stops early, out of room; delay: 3 s;
-//                                          picky: refuses the reasoning setting)
+//                                          picky: refuses the reasoning setting;
+//                                          nonone: refuses only effort "none";
+//                                          cutoff: stops part-way with an error, all but the default)
 //   GET  /__ai                             the requests it got (model, prompt, image size)
 // BookOps asks the same stand-in (x-title "Shelf-Address BookOps") and gets JSON back:
 //   POST /__ai?book=plain|isbn|badisbn|garbage   what it "reads" next (default plain:
@@ -20,7 +22,7 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
 
-const PORT = 8790;
+const PORT = Number(process.env.E2E_BOOKS_PORT) || 8790; // run-fast.cjs gives each worker its own
 const BASE = `http://127.0.0.1:${PORT}`;
 const FIX = path.join(__dirname, "../lib/lookup/__fixtures__");
 const fixture = (f) => JSON.parse(fs.readFileSync(path.join(FIX, f), "utf8"));
@@ -56,6 +58,7 @@ const log = [];
 const AI_KEY = "test-openrouter-key";
 const AI_TEXT = "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.";
 let aiMode = "ok";
+let aiIsbn = "found";
 let aiBook = "plain";
 const aiRequests = [];
 // What the stand-in "reads" off a BookOps book's photos.
@@ -106,12 +109,25 @@ async function chat(req, res) {
   if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
   if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
+  // Extract's ISBN reading (V34): digits only — or NONE with ?isbn=none.
+  if (req.headers["x-title"] === "Shelf-Address Extract ISBN") {
+    return json(res, 200, { model: body.model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: aiIsbn === "none" ? "NONE" : "9789510230763" } }] });
+  }
   if (req.headers["x-title"] === "Shelf-Address BookOps") {
     const answer = aiBook === "garbage" ? "Sorry, I can't make out these photos." : "```json\n" + JSON.stringify(BOOKOPS[aiBook] ?? BOOKOPS.plain) + "\n```";
     return json(res, 200, { choices: [{ message: { role: "assistant", content: answer } }] });
   }
   if (aiMode === "delay") await new Promise((r) => setTimeout(r, 3000)); // a slow but fine answer
   if (aiMode === "picky" && body.reasoning) return json(res, 400, { error: { message: "Reasoning is mandatory / unsupported for this model" } });
+  // Stops part-way with an error, as Flash-Lite and 3.6 Flash did in the shop (all but the default).
+  if (aiMode === "cutoff" && body.model !== "google/gemini-3.8-flash:nitro") {
+    return json(res, 200, {
+      model: body.model,
+      provider: "Google AI Studio",
+      choices: [{ finish_reason: "error", native_finish_reason: "RECITATION", error: { message: "Model stopped: recitation", code: 502 }, message: { role: "assistant", content: AI_TEXT.split(" ").slice(0, 6).join(" ") } }],
+    });
+  }
+  if (aiMode === "nonone" && body.reasoning?.effort === "none") return json(res, 400, { error: { message: "Reasoning is mandatory for this model" } });
   const usage = (answer, thinking) => ({ prompt_tokens: 1290, completion_tokens: answer, completion_tokens_details: { reasoning_tokens: thinking } });
   if (aiMode === "length") {
     return json(res, 200, {
@@ -142,6 +158,7 @@ http
     if (p === "/__ai") {
       if (req.method === "POST") {
         if (url.searchParams.has("book")) aiBook = url.searchParams.get("book");
+        else if (url.searchParams.has("isbn")) aiIsbn = url.searchParams.get("isbn");
         else aiMode = url.searchParams.get("mode") || "ok";
       }
       return json(res, 200, { mode: aiMode, book: aiBook, requests: aiRequests });

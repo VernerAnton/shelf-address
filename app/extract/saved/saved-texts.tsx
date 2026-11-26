@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
 import { CoverPanel, coverUrl } from "./cover-panel";
+import { modelLabel } from "@/lib/ai-models";
+import { formatIsbn } from "@/lib/isbn";
 
 /** How often the list checks for new texts while it's on screen. */
 const REFRESH_MS = 5000;
@@ -41,6 +43,7 @@ export function SavedTexts() {
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isbnCopied, setIsbnCopied] = useState(false);
   // The picture shown full size (its address: the server's, or a just-edited one), or null.
   const [zoom, setZoom] = useState<string | null>(null);
   const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
@@ -168,18 +171,16 @@ export function SavedTexts() {
     }
   };
 
-  /**
-   * Done: the text moves down to the Done section, and the next one still to
-   * do opens (on a phone, back to the list). Not done: it moves back up.
-   */
-  const setDone = async (t: SavedText, done: boolean) => {
-    setTexts((all) => all.map((x) => (x.id === t.id ? { ...x, doneAt: done ? new Date().toISOString() : null } : x)));
-    if (done) {
-      const next = texts.find((x) => !x.doneAt && x.id !== t.id);
-      open(next && window.matchMedia("(min-width: 768px)").matches ? next.id : null);
+  /** The ISBN button (V34, in place of Mark done, which nobody used): copies the number for a listing. */
+  const copyIsbn = async (t: SavedText) => {
+    if (!t.isbn) return;
+    try {
+      await navigator.clipboard.writeText(t.isbn);
+      setIsbnCopied(true);
+      setTimeout(() => setIsbnCopied(false), 2000);
+    } catch {
+      window.alert(`Couldn't copy. The ISBN is ${t.isbn}.`);
     }
-    await fetch(`/api/extract/texts/${t.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ done }) }).catch(() => {});
-    void load();
   };
 
   const remove = async (t: SavedText) => {
@@ -213,7 +214,7 @@ export function SavedTexts() {
             <span>{when(t.createdAt)}</span>
             <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
           </span>
-          <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
+          <span className="line-clamp-2 text-sm">{firstWords(t.text) || (t.isbn ? `ISBN ${formatIsbn(t.isbn)}` : "")}</span>
         </span>
       </button>
     </li>
@@ -236,7 +237,7 @@ export function SavedTexts() {
               The heights below allow for both bottom rows: the tabs and Extract's own (BookOps | Text Extract). */}
           <div
             aria-label="Saved texts"
-            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-21rem)] ${text ? "hidden md:flex" : ""}`}
+            className={`flex flex-col gap-6 md:max-h-[calc(100dvh-22.5rem)] ${text ? "hidden md:flex" : ""}`}
           >
             <section aria-label="To do" className="flex min-h-0 flex-col gap-2">
               <h2 className="px-1 text-sm font-semibold">To do ({todo.length})</h2>
@@ -259,18 +260,33 @@ export function SavedTexts() {
               <button type="button" onClick={() => open(null)} className="self-start text-sm font-medium text-accent md:hidden">
                 ← All texts
               </button>
-              <p className="text-sm text-muted">
+              {/*
+                Just the times (V34.4): the rest — who read it, how long it took, corrections, front cover — is in
+                the hover text, so the line never wraps and pushes the text box down.
+              */}
+              <p
+                aria-label="About this text"
+                title={[
+                  text.source === "phone"
+                    ? "Read by the phone's own reader — check it carefully"
+                    : `Read by AI${text.aiModels.length ? ` (${[...new Set(text.aiModels.map(modelLabel))].join(", ")})` : ""}${
+                        text.aiMs.length ? ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}` : ""
+                      }`,
+                  text.editedOnComputerAt ? "Corrected on the computer" : null,
+                  text.coverAt ? null : "No front cover photo",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                className="cursor-help truncate text-sm text-muted"
+              >
                 {when(text.createdAt)}
-                {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
-                {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
-                {/* How long the AI took (V33.1): one time per photo of the back. */}
-                {text.source !== "phone" && text.aiMs.length > 0 && ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}`}
-                {text.editedOnComputerAt && " · corrected on the computer"}
-                {!text.coverAt && " · no front cover photo"}
+                {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`}
+                {text.source === "phone" && <span className="text-danger"> · read by the phone — check it</span>}
               </p>
               {text.doneAt && <p className="-mt-1 text-sm font-medium text-muted">✓ Done — moved to the Done list.</p>}
               <div className={text.coverAt ? "flex flex-col gap-4 md:flex-row md:items-start" : ""}>
                 <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  <div className="relative">
                   <textarea
                     aria-label="Text"
                     value={shown}
@@ -279,31 +295,59 @@ export function SavedTexts() {
                     lang="fi"
                     spellCheck
                     rows={14}
-                    className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
+                    className={`block min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
                       // On a wide screen (the page grows with a cover) they fit on one row again.
-                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-28rem)]"
+                      text.coverAt ? "md:h-[calc(100dvh-28rem)] xl:h-[calc(100dvh-24.5rem)]" : "md:h-[calc(100dvh-24.5rem)]"
                     }`}
                   />
-                  <p role="status" aria-label="Correction" className={`-mt-1 text-sm ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
-                    {draft?.id === text.id
-                      ? draft.status === "saving"
-                        ? "Saving…"
-                        : draft.status === "saved"
-                          ? "✓ Correction saved. The phone can't change this text any more."
-                          : (draft.error ?? "Couldn't save the correction.")
-                      : "You can correct the text right here — it saves by itself."}
+                  {/*
+                    Just under the text box's bottom-right corner, outside it (V34.2): a turning ↻ while a correction
+                    saves, ✓ once saved — no words to distract. Errors stay in words. Screen readers get the words.
+                  */}
+                  <p
+                    role="status"
+                    aria-label="Correction"
+                    title={
+                      // On hover (V34.4): what the icon means.
+                      draft?.id === text.id
+                        ? draft.status === "saving"
+                          ? "Saving the correction…"
+                          : draft.status === "saved"
+                            ? "Correction saved — the phone can't change this text any more"
+                            : undefined
+                        : undefined
+                    }
+                    className={`absolute top-full right-1 cursor-default flex h-3 items-center gap-1 text-sm leading-none ${draft?.status === "error" ? "text-danger" : "text-muted"}`}
+                  >
+                    {draft?.id === text.id && draft.status === "saving" && (
+                      <>
+                        <span aria-hidden className="inline-block animate-spin">↻</span>
+                        <span className="sr-only">Saving…</span>
+                      </>
+                    )}
+                    {draft?.id === text.id && draft.status === "saved" && (
+                      <>
+                        <span aria-hidden>✓</span>
+                        <span className="sr-only">Correction saved. The phone can&apos;t change this text any more.</span>
+                      </>
+                    )}
+                    {draft?.id === text.id && draft.status === "error" && <span className="text-xs">{draft.error ?? "Couldn't save the correction."}</span>}
                   </p>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
                     <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
                       {copied ? "Copied ✓" : "Copy"}
                     </button>
                     <button
                       type="button"
-                      onClick={() => void setDone(text, !text.doneAt)}
-                      className={`${button} border border-line bg-surface`}
+                      disabled={!text.isbn}
+                      onClick={() => void copyIsbn(text)}
+                      aria-label={text.isbn ? `Copy ISBN ${text.isbn}` : "No ISBN"}
+                      title={text.isbn ? "Copy the ISBN" : "No ISBN was photographed or typed on the phone"}
+                      className={`${button} bg-isbn font-mono text-sm text-isbn-contrast disabled:opacity-40`}
                     >
-                      {text.doneAt ? "Not done" : "✓ Mark done"}
+                      {isbnCopied ? "ISBN copied ✓" : text.isbn ? formatIsbn(text.isbn) : "No ISBN"}
                     </button>
                     <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
                       Delete

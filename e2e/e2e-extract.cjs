@@ -32,7 +32,7 @@ const MORE = ["Kansi: Otava. Painettu EU-", "maissa vuonna 2004."];
 (async () => {
   const errors = [];
   const browser = await chromium.launch();
-  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: "http://127.0.0.1:8788" });
+  const ctx = await browser.newContext({ ...devices["Pixel 7"], baseURL: process.env.E2E_BASE || "http://127.0.0.1:8788" });
   const page = await ctx.newPage(); page.setDefaultTimeout(20000);
   page.on("pageerror", (e) => errors.push(String(e)));
   const take = async (b64) => page.getByLabel("Text photo").setInputFiles({ name: "IMG.jpg", mimeType: "image/jpeg", buffer: Buffer.from(b64, "base64") });

@@ -1,3 +1,4 @@
+import { FALLBACK_MODEL } from "@/lib/ai-models";
 import { Buffer } from "node:buffer";
 import { settings } from "@/lib/extract-ai";
 import { tidyAiText } from "@/lib/extract-text";
@@ -93,7 +94,8 @@ export async function readBook(photos: Photo[]): Promise<AiReading> {
         // Shown on OpenRouter's activity page, so the owner can tell what spent what.
         "x-title": "Shelf-Address BookOps",
       },
-      body: JSON.stringify({ model: s.model, temperature: 0, max_tokens: 2500, messages: [{ role: "user", content }] }),
+      // BookOps stays on 3.8 Flash · Nitro (V33.9): Extract's default became Flash-Lite, untried for BookOps.
+      body: JSON.stringify({ model: FALLBACK_MODEL, temperature: 0, max_tokens: 2500, messages: [{ role: "user", content }] }),
       signal: AbortSignal.timeout(AI_TIMEOUT_MS),
     });
   } catch {

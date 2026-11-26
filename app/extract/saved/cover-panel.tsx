@@ -50,7 +50,7 @@ async function turned(picture: Blob, direction: 1 | -1): Promise<Blob> {
 }
 
 const IMAGE =
-  "max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]";
+  "max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_68rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_68rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_68rem)_*_1.45))]";
 
 /**
  * The front cover on Saved texts (docs/spec-corrections.md §28): large, to
@@ -67,11 +67,12 @@ const IMAGE =
  * Wide screens: the buttons sit beside the picture, so it can be as tall as
  * the whole text column. Its size is also held to the width the text column
  * can spare: the text's buttons need ~30rem to stay on one row, and the list,
- * gaps and these buttons take 66rem of the page. The heights allow for both
+ * gaps and these buttons take 68rem of the page. The heights allow for both
  * bottom rows (the tabs and Extract's own).
  */
 export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedText; button: string; onZoom: (src: string) => void; onChanged: () => Promise<void> }) {
   const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Blob | null>(null);
   const [opening, setOpening] = useState(false);
@@ -82,6 +83,9 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
   const [saving, setSaving] = useState(0);
   const [saved, setSaved] = useState(false);
   const queue = useRef<Promise<void>>(Promise.resolve());
+  // Turns one after another, each from the newest picture: quick taps must all count (V33.3).
+  const turns = useRef<Promise<void>>(Promise.resolve());
+  const newest = useRef<{ id: string; blob: Blob } | null>(null);
 
   const mine = local?.id === text.id ? local : null;
   const src = mine?.url ?? coverUrl(text);
@@ -94,9 +98,9 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
     };
   }, [local?.url]);
 
-  /** The picture as it is now: the newest made here, or the server's. */
+  /** The picture as it is now: the newest made here (even if not on screen yet), or the server's. */
   const current = async (): Promise<Blob> => {
-    if (mine) return mine.blob;
+    if (newest.current?.id === text.id) return newest.current.blob;
     const response = await fetch(coverUrl(text));
     if (!response.ok) throw new Error("The picture couldn't be loaded.");
     return response.blob();
@@ -105,6 +109,7 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
   /** Shows `picture` at once and saves it in the background, after any save still under way. */
   const apply = (picture: Blob, before: Blob | null) => {
     const id = text.id;
+    newest.current = { id, blob: picture };
     setLocal({ id, blob: picture, url: URL.createObjectURL(picture) });
     setUndo(before ? { id, blob: before } : null);
     setError(null);
@@ -125,6 +130,7 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
         setTimeout(() => setSaved(false), 2500);
       } catch (e) {
         // Not saved: go back to what the server has, and say so.
+        if (newest.current?.blob === picture) newest.current = null;
         setLocal((l) => (l?.blob === picture ? null : l));
         setError(`${(e as Error).message} The change wasn't kept — try again.`);
       } finally {
@@ -133,13 +139,15 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
     });
   };
 
-  const turn = async (direction: 1 | -1) => {
-    try {
-      const before = await current();
-      apply(await turned(before, direction), before);
-    } catch (e) {
-      setError((e as Error).message);
-    }
+  const turn = (direction: 1 | -1) => {
+    turns.current = turns.current.then(async () => {
+      try {
+        const before = await current();
+        apply(await turned(before, direction), before);
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    });
   };
 
   const openEditor = async () => {
@@ -156,6 +164,45 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
   const putBack = () => {
     if (undo?.id !== text.id) return;
     apply(undo.blob, null);
+  };
+
+  /**
+   * Download picture (V34.2): the "Save as" window, so the picture can go
+   * straight into the folder kept for them — which the browser then opens
+   * at next time (the `id`). Browsers without it (Firefox, Safari) download
+   * to the usual folder as before.
+   */
+  const downloadPicture = async () => {
+    type Picker = (options: {
+      suggestedName: string;
+      id: string;
+      startIn: string;
+      types: { description: string; accept: Record<string, string[]> }[];
+    }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>;
+    const picker = (window as unknown as { showSaveFilePicker?: Picker }).showSaveFilePicker;
+    try {
+      const picture = await current();
+      if (!picker) {
+        const url = URL.createObjectURL(picture);
+        Object.assign(document.createElement("a"), { href: url, download: fileName(text) }).click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        return;
+      }
+      const handle = await picker({
+        suggestedName: fileName(text),
+        id: "front-covers",
+        startIn: "pictures",
+        types: [{ description: "JPEG picture", accept: { "image/jpeg": [".jpg", ".jpeg"] } }],
+      });
+      const file = await handle.createWritable();
+      await file.write(picture);
+      await file.close();
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch (e) {
+      // Closing the Save as window isn't an error.
+      if ((e as { name?: string })?.name !== "AbortError") setError("Couldn't save the picture. Try again, or use Copy picture.");
+    }
   };
 
   const copyPicture = async () => {
@@ -188,15 +235,15 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
           <button type="button" onClick={() => void copyPicture()} className={`${button} bg-accent text-accent-contrast`}>
             {copied ? "Picture copied ✓" : "Copy picture"}
           </button>
-          <a href={src} download={fileName(text)} className={`${button} border border-line bg-surface`}>
-            Download picture
-          </a>
+          <button type="button" onClick={() => void downloadPicture()} className={`${button} border border-line bg-surface`}>
+            {downloaded ? "Saved ✓" : "Download picture"}
+          </button>
         </div>
         <div role="group" aria-label="Edit the picture" className="grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => void turn(-1)} aria-label="Rotate left" title="Turn a quarter to the left" className={`${button} border border-line bg-surface text-xl`}>
+          <button type="button" onClick={() => turn(-1)} aria-label="Rotate left" title="Turn a quarter to the left" className={`${button} border border-line bg-surface text-xl`}>
             ↺
           </button>
-          <button type="button" onClick={() => void turn(1)} aria-label="Rotate right" title="Turn a quarter to the right" className={`${button} border border-line bg-surface text-xl`}>
+          <button type="button" onClick={() => turn(1)} aria-label="Rotate right" title="Turn a quarter to the right" className={`${button} border border-line bg-surface text-xl`}>
             ↻
           </button>
           <button

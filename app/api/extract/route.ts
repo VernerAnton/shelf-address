@@ -19,7 +19,7 @@ export async function POST(request: Request) {
     const length = Number(request.headers.get("content-length") ?? 0);
     if (length > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");
     const photo = await request.arrayBuffer();
-    const { text, details } = await readWithAi(photo, type);
+    const { text, details } = await readWithAi(photo, type, request.headers.get("x-model"));
     // Kept with the saved text it's for, so the reading can be reported from the computer (§28).
     const textId = request.headers.get("x-text-id");
     if (textId && /^[\w-]{8,64}$/.test(textId)) {

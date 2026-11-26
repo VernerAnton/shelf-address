@@ -5,8 +5,12 @@ const { chromium, devices } = require(execSync("npm root -g").toString().trim() 
 const { videoFile } = require("./videos.cjs");
 
 const ROOT = path.join(__dirname, "..");
-const BASE_URL = "http://127.0.0.1:8788";
-const BOOKS = "http://127.0.0.1:8790"; // the book-service stand-in (mock-books.cjs)
+// The app and the book-service stand-in (mock-books.cjs). run-fast.cjs runs several
+// suites at once, each with its own server, stand-in and local database, and says
+// where through these; run.sh leaves them unset.
+const BASE_URL = process.env.E2E_BASE || "http://127.0.0.1:8788";
+const BOOKS = process.env.E2E_BOOKS || "http://127.0.0.1:8790";
+const PERSIST = process.env.E2E_PERSIST ? ` --persist-to ${JSON.stringify(process.env.E2E_PERSIST)}` : "";
 // A string: "32" or "32.1".
 const APP_VERSION = /APP_VERSION = "?([\d.]+)"?/.exec(require("fs").readFileSync(path.join(ROOT, "lib/version.ts"), "utf8"))[1];
 
@@ -42,7 +46,7 @@ function suite() {
 
 /** Runs SQL on the local database (the one wrangler dev serves). */
 function sql(q) {
-  const out = execSync(`npx wrangler d1 execute shelf-address-db --local --json --command ${JSON.stringify(q)}`, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] });
+  const out = execSync(`npx wrangler d1 execute shelf-address-db --local${PERSIST} --json --command ${JSON.stringify(q)}`, { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] });
   return JSON.parse(out.toString())[0].results;
 }
 

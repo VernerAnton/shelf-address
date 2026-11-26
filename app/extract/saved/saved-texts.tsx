@@ -260,16 +260,28 @@ export function SavedTexts() {
               <button type="button" onClick={() => open(null)} className="self-start text-sm font-medium text-accent md:hidden">
                 ← All texts
               </button>
-              <p className="text-sm text-muted">
+              {/*
+                Just the times (V34.4): the rest — who read it, how long it took, corrections, front cover — is in
+                the hover text, so the line never wraps and pushes the text box down.
+              */}
+              <p
+                aria-label="About this text"
+                title={[
+                  text.source === "phone"
+                    ? "Read by the phone's own reader — check it carefully"
+                    : `Read by AI${text.aiModels.length ? ` (${[...new Set(text.aiModels.map(modelLabel))].join(", ")})` : ""}${
+                        text.aiMs.length ? ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}` : ""
+                      }`,
+                  text.editedOnComputerAt ? "Corrected on the computer" : null,
+                  text.coverAt ? null : "No front cover photo",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+                className="cursor-help truncate text-sm text-muted"
+              >
                 {when(text.createdAt)}
-                {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
-                {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
-                {/* Which model (V33.4), while models are being compared. */}
-                {text.source !== "phone" && text.aiModels.length > 0 && ` (${[...new Set(text.aiModels.map(modelLabel))].join(", ")})`}
-                {/* How long the AI took (V33.1): one time per photo of the back. */}
-                {text.source !== "phone" && text.aiMs.length > 0 && ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}`}
-                {text.editedOnComputerAt && " · corrected on the computer"}
-                {!text.coverAt && " · no front cover photo"}
+                {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`}
+                {text.source === "phone" && <span className="text-danger"> · read by the phone — check it</span>}
               </p>
               {text.doneAt && <p className="-mt-1 text-sm font-medium text-muted">✓ Done — moved to the Done list.</p>}
               <div className={text.coverAt ? "flex flex-col gap-4 md:flex-row md:items-start" : ""}>
@@ -296,8 +308,17 @@ export function SavedTexts() {
                   <p
                     role="status"
                     aria-label="Correction"
-                    title={draft?.id === text.id && draft.status === "saved" ? "Correction saved — the phone can't change this text any more" : undefined}
-                    className={`pointer-events-none absolute top-full right-1 flex h-3 items-center gap-1 text-sm leading-none ${draft?.status === "error" ? "text-danger" : "text-muted"}`}
+                    title={
+                      // On hover (V34.4): what the icon means.
+                      draft?.id === text.id
+                        ? draft.status === "saving"
+                          ? "Saving the correction…"
+                          : draft.status === "saved"
+                            ? "Correction saved — the phone can't change this text any more"
+                            : undefined
+                        : undefined
+                    }
+                    className={`absolute top-full right-1 cursor-default flex h-3 items-center gap-1 text-sm leading-none ${draft?.status === "error" ? "text-danger" : "text-muted"}`}
                   >
                     {draft?.id === text.id && draft.status === "saving" && (
                       <>

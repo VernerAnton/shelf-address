@@ -968,3 +968,8 @@ listing.
 - **V34.3:** no words inside the text box: a turning ↻ while a correction
   saves and ✓ once saved, just under the box's bottom-right corner, outside
   it (words for screen readers, and for errors).
+- **V34.4:** the line above the text shows just the times ("26.11. klo 08.58 ·
+  changed 26.11. klo 09.17"); who read it, how long it took, corrections and
+  the front cover are in its hover text — it had wrapped onto two lines and
+  pushed the text box down. A text read by the phone's own reader still says
+  so in red ("check it"). The save icons explain themselves on hover too.

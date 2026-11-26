@@ -702,7 +702,7 @@ export function ExtractScreen() {
           {/* How long the whole wait was, photo to text (V33.1). */}
           {last?.readBy === "ai" && last.reply && (
             <>
-              <span aria-label="Model"> ({modelLabel(last.details?.model)})</span>
+              <span aria-label="Model"> ({modelLabel(last.details?.requested ?? last.details?.model)})</span>
               <span aria-label="Time taken"> in {seconds(last.ms)}</span>
             </>
           )}{" "}

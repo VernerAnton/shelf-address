@@ -69,12 +69,12 @@ const t = suite();
   check("…exactly, paragraphs kept, formatting marks dropped", text === "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.", JSON.stringify(text));
   check("…no warning", (await page.getByText(/check the text carefully|may be read wrong/).count()) === 0);
   const req = (await ai()).requests.at(-1);
-  check("asked Gemini 3.8 Flash on OpenRouter, with the key from the server", req.model === "google/gemini-3.8-flash" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
+  check("asked Gemini 3.8 Flash with Nitro (V33.5) on OpenRouter, with the key from the server", req.model === "google/gemini-3.8-flash:nitro" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
   check("photo made smaller before sending (≤ 2000 px, JPEG)", req.imageType === "image/jpeg" && Math.max(req.width, req.height) === 2000 && req.imageBytes < 1500000, JSON.stringify({ w: req.width, h: req.height, bytes: req.imageBytes }));
   check("told to copy exactly, keep ä/ö/å, skip stickers and barcodes", /exactly, word for word/.test(req.prompt) && /ä, ö, å/.test(req.prompt) && /price stickers, barcodes/.test(req.prompt));
   check("room for a long answer (20,000 tokens)", req.maxTokens === 20000, String(req.maxTokens));
   check("thinking kept to a minimum (V32)", req.reasoning && req.reasoning.effort === "minimal", JSON.stringify(req.reasoning));
-  check("…and the fastest-answering provider asked for", req.provider && req.provider.sort === "latency", JSON.stringify(req.provider));
+  check("…Nitro does the provider sorting itself: no sort of our own sent", !req.provider, JSON.stringify(req.provider));
 
   // Start over sits at the top, right under the photo button (V26).
   const another = page.getByRole("button", { name: "Add another photo" });
@@ -132,17 +132,19 @@ const t = suite();
   // Choosing the model on the phone (V33.4): kept per phone, and only models on the server's list.
   const pick = page.getByLabel("AI model");
   check("model choice: Gemini by default", await visible(pick) && (await pick.inputValue()) === "");
-  await pick.selectOption({ label: "Grok 4.20" });
+  check("…Grok 4.20 isn't offered any more (V33.5)", (await pick.locator("option").allInnerTexts()).every((o) => !/Grok/.test(o)));
+  await pick.selectOption({ label: "Gemini 3.8 Flash · standard" });
   await startOver();
   await take(await cover(page, PHONE_TEXT));
   await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 });
-  check("Grok chosen: the reading goes to Grok", (await ai()).requests.at(-1).model === "x-ai/grok-4.20", (await ai()).requests.at(-1).model);
-  check("…and the phone says so", (await page.getByLabel("Model", { exact: true }).innerText()).includes("Grok 4.20"));
+  const std = (await ai()).requests.at(-1);
+  check("standard chosen: asked for without Nitro, fastest provider by our own sort", std.model === "google/gemini-3.8-flash" && std.provider && std.provider.sort === "latency", JSON.stringify([std.model, std.provider]));
+  check("…and the phone says so", (await page.getByLabel("Model", { exact: true }).innerText()).includes("Gemini 3.8 Flash · standard"));
   await page.reload();
-  check("…the choice is kept on the phone", (await page.getByLabel("AI model").inputValue()) === "x-ai/grok-4.20");
-  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.8 Flash (default)" });
+  check("…the choice is kept on the phone", (await page.getByLabel("AI model").inputValue()) === "google/gemini-3.8-flash");
+  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.8 Flash · Nitro (default)" });
   const sneaky = await page.request.post("/api/extract", { data: (await cover(page, PHONE_TEXT)), headers: { "content-type": "image/jpeg", "x-model": "openai/some-expensive-model" } });
-  check("a model not on the list isn't used: the default reads it", sneaky.ok() && (await ai()).requests.at(-1).model === "google/gemini-3.8-flash", (await ai()).requests.at(-1).model);
+  check("a model not on the list isn't used: the default reads it", sneaky.ok() && (await ai()).requests.at(-1).model === "google/gemini-3.8-flash:nitro", (await ai()).requests.at(-1).model);
 
   // A model that refuses the speed settings (V32): asked again plainly, still read by AI.
   await ai("picky");

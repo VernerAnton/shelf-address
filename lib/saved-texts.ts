@@ -177,7 +177,7 @@ export async function listTexts(limit = 200): Promise<SavedText[]> {
             SELECT CAST(json_extract(r.details, '$.ms') AS INTEGER) AS ms FROM saved_text_readings r
             WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_ms,
          (SELECT group_concat(model) FROM (
-            SELECT json_extract(r.details, '$.model') AS model FROM saved_text_readings r
+            SELECT coalesce(json_extract(r.details, '$.requested'), json_extract(r.details, '$.model')) AS model FROM saved_text_readings r
             WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_models
        FROM saved_texts t ORDER BY t.created_at DESC LIMIT ?`,
     )

@@ -22,7 +22,8 @@ import { isAllowedModel } from "@/lib/ai-models";
  *   OPENROUTER_BASE      optional: tests point it at a local stand-in.
  */
 
-export const DEFAULT_MODEL = "google/gemini-3.8-flash";
+export { DEFAULT_MODEL } from "@/lib/ai-models";
+import { DEFAULT_MODEL } from "@/lib/ai-models";
 const OPENROUTER = "https://openrouter.ai/api/v1";
 export const COOKIE = "extract_login";
 const TOKEN_PURPOSE = "shelf-address extract login v1";
@@ -166,6 +167,8 @@ export type AiDetails = {
   ms: number;
   /** How much thinking was allowed (V32), and who at OpenRouter served it, if it says. */
   thinking?: string;
+  /** The model as asked for (V33.5): OpenRouter names the same model for ":nitro" and standard. */
+  requested?: string;
   provider?: string | null;
 };
 
@@ -207,7 +210,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
           // Thinking was 70–80% of what the model produced, and most of the wait; copying text needs little (V32).
           reasoning: { effort: s.thinking },
           // Of the providers serving the model, the one answering fastest right now (V32).
-          provider: { sort: "latency" },
+          // (":nitro" does its own sorting — by speed, with the priority tier — so not with it.)
+          ...(!s.model.endsWith(":nitro") && { provider: { sort: "latency" } }),
         }),
         messages: [
           {
@@ -247,6 +251,7 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
     text: tidyAiText(text),
     details: {
       model: typeof body?.model === "string" ? body.model : s.model,
+      requested: s.model,
       thinking: tuned ? s.thinking : "model's default (settings refused)",
       provider: typeof body?.provider === "string" ? body.provider : null,
       finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,

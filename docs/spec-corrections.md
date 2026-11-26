@@ -885,3 +885,10 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   retry applies.
 - The phone's line says "Read by AI (Grok 4.20) in 4.9 s"; the computer's
   "read by AI (Grok 4.20) in 4.1 s"; reports name the model, as before.
+- **V33.5:** Grok 4.20 was tried in the shop and was about half as fast as
+  Gemini; it's off the list. The default is now `google/gemini-3.8-flash:nitro`
+  — OpenRouter picks the fastest endpoints, Google's priority tier included
+  (dearer, still well under a cent a cover); with it no `provider.sort` of our
+  own is sent. "Gemini 3.8 Flash · standard" stays in the dropdown to compare.
+  Each reading records the model as asked for (`requested`), since OpenRouter
+  names the same model for both. BookOps reads with the same default.

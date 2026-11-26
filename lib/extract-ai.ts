@@ -16,8 +16,8 @@ import { isAllowedModel } from "@/lib/ai-models";
  *                        limit on the key), not here.
  *   EXTRACT_MODEL        optional: another OpenRouter model id.
  *   EXTRACT_THINKING     optional: how much the model may think before it
- *                        answers — minimal (default, V32), low, medium, high,
- *                        or none. Copying text needs little thinking, and
+ *                        answers — none (default since V33.6), minimal, low,
+ *                        medium, high. Copying text needs little thinking, and
  *                        thinking was most of the wait (§29).
  *   OPENROUTER_BASE      optional: tests point it at a local stand-in.
  */
@@ -59,7 +59,7 @@ export async function settings(): Promise<Settings> {
     code: env.EXTRACT_CODE?.trim() || null,
     key: env.OPENROUTER_API_KEY?.trim() || null,
     model: env.EXTRACT_MODEL?.trim() || DEFAULT_MODEL,
-    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "minimal",
+    thinking: THINKING.includes(env.EXTRACT_THINKING?.trim() ?? "") ? env.EXTRACT_THINKING!.trim() : "none",
     base: (env.OPENROUTER_BASE?.trim() || OPENROUTER).replace(/\/$/, ""),
   };
 }
@@ -193,7 +193,8 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
   // Node's Buffer (nodejs_compat): native base64, a few hundred KB in well under a millisecond of CPU.
   const dataUrl = `data:${type};base64,${Buffer.from(photo).toString("base64")}`;
   const started = Date.now();
-  const ask = (tuned: boolean) =>
+  // effort: how much thinking to allow; null sends no thinking or routing settings at all.
+  const ask = (effort: string | null) =>
     fetch(`${s.base}/chat/completions`, {
       method: "POST",
       headers: {
@@ -206,9 +207,11 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
         model: s.model,
         temperature: 0,
         max_tokens: MAX_TOKENS,
-        ...(tuned && {
-          // Thinking was 70–80% of what the model produced, and most of the wait; copying text needs little (V32).
-          reasoning: { effort: s.thinking },
+        ...(effort && {
+          // Thinking was 70–80% of what the model produced, and most of the wait (V32). Off since V33.6: a
+          // reading with thinking was twice as slow and "improved" the wording ("Viestin sisältävän" for the
+          // printed "Viestiin sisältyvän"); without it the copy was exact. We want a copy, not reasoning.
+          reasoning: { effort },
           // Of the providers serving the model, the one answering fastest right now (V32).
           // (":nitro" does its own sorting — by speed, with the priority tier — so not with it.)
           ...(!s.model.endsWith(":nitro") && { provider: { sort: "latency" } }),
@@ -225,15 +228,16 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
       }),
       signal: AbortSignal.timeout(Math.max(1000, AI_TIMEOUT_MS - (Date.now() - started))),
     });
+  // If the model refuses a setting (400): "none" falls back to "minimal", and that to no settings, as before V32.
+  const tries: (string | null)[] = [s.thinking, ...(s.thinking === "none" ? ["minimal"] : []), null];
   let response: Response;
-  let tuned = true;
+  let used: string | null = null;
   try {
-    response = await ask(true);
-    // Refused as asked (a model that won't take these settings, say): once more, plain, as before V32.
-    if (response.status === 400) {
-      console.error("AI refused the speed settings:", (await response.text().catch(() => "")).slice(0, 300));
-      tuned = false;
-      response = await ask(false);
+    for (;;) {
+      used = tries.shift() ?? null;
+      response = await ask(used);
+      if (response.status !== 400 || !tries.length) break;
+      console.error(`AI refused thinking "${used}":`, (await response.text().catch(() => "")).slice(0, 300));
     }
   } catch {
     throw new ExtractError("The AI didn't answer in time.", 504, "fallback");
@@ -252,7 +256,7 @@ export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: stri
     details: {
       model: typeof body?.model === "string" ? body.model : s.model,
       requested: s.model,
-      thinking: tuned ? s.thinking : "model's default (settings refused)",
+      thinking: used ?? "model's default (settings refused)",
       provider: typeof body?.provider === "string" ? body.provider : null,
       finishReason: choice?.finish_reason ?? choice?.native_finish_reason ?? null,
       promptTokens: count(body?.usage?.prompt_tokens),

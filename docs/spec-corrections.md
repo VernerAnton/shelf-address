@@ -892,3 +892,11 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   own is sent. "Gemini 3.8 Flash · standard" stays in the dropdown to compare.
   Each reading records the model as asked for (`requested`), since OpenRouter
   names the same model for both. BookOps reads with the same default.
+- **V33.6:** thinking **off** (`effort: "none"`). The shop noticed the same
+  book read twice in a row took 13.5 s and then 6.4 s: "minimal" still lets
+  Gemini think when it judges a photo hard (1,568 thinking tokens there). The
+  thinking reading was also *less* accurate: it wrote "Viestin sisältävän"
+  where the cover prints "Viestiin sisältyvän" (the reading without thinking
+  had it exactly). If a model refuses "none", it's asked with "minimal", then
+  with no settings. No change to the instructions: the owner wants the AI just
+  to copy; leftovers like a series number are rare and removed by hand.

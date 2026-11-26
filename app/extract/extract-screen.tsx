@@ -8,6 +8,7 @@ import { queueCover, queueText, syncCovers, syncTexts, type CoverResult, type Sy
 import { readTextFromPhoto, warmOcr } from "@/lib/client/ocr";
 import { logPhoto } from "@/lib/client/photo-log";
 import type { AiDetails } from "@/lib/extract-ai";
+import { AI_MODELS, isAllowedModel, modelLabel } from "@/lib/ai-models";
 import { tidyText } from "@/lib/extract-text";
 import { LoginForm } from "./_components/login-form";
 
@@ -169,7 +170,18 @@ async function fetchReading(readingId: string): Promise<AiAnswer | null> {
  * keeps its answer under, and after a few seconds — and on coming back to the
  * app — the phone also asks for it there (V31). Whichever comes first wins.
  */
-async function readWithAi(jpeg: Blob, textId: string): Promise<AiAnswer> {
+/** The AI model this phone reads with (V33.4): "" for the app's default. Kept per phone. */
+const MODEL_KEY = "extract:model";
+function chosenModel(): string {
+  try {
+    const m = localStorage.getItem(MODEL_KEY) ?? "";
+    return isAllowedModel(m) ? m : "";
+  } catch {
+    return "";
+  }
+}
+
+async function readWithAi(jpeg: Blob, textId: string, model: string): Promise<AiAnswer> {
   const readingId = crypto.randomUUID();
   const controller = new AbortController();
   const timers: ReturnType<typeof setTimeout>[] = [];
@@ -182,7 +194,7 @@ async function readWithAi(jpeg: Blob, textId: string): Promise<AiAnswer> {
       response = await fetch("/api/extract", {
         method: "POST",
         body: jpeg,
-        headers: { "content-type": "image/jpeg", "x-text-id": textId, "x-reading-id": readingId },
+        headers: { "content-type": "image/jpeg", "x-text-id": textId, "x-reading-id": readingId, ...(model && { "x-model": model }) },
         signal: controller.signal,
       });
     } catch {
@@ -257,6 +269,8 @@ export function ExtractScreen() {
   const [loaded, setLoaded] = useState(false);
   const [text, setText] = useState("");
   const [reading, setReading] = useState(false);
+  // Read once; the screen shows "Loading…" until the phone's own data is in, so no mismatch with the server's render.
+  const [model, setModel] = useState(chosenModel);
   // The stopwatch while a photo is read (V33.1): when it started, and the time now, ticking.
   const [readingSince, setReadingSince] = useState<number | null>(null);
   const [now, setNow] = useState(0);
@@ -428,7 +442,7 @@ export function ExtractScreen() {
       if (ai.loggedIn) {
         try {
           if (!jpeg) throw new AiUnavailable("the photo couldn't be prepared");
-          ({ text: read, details } = await readWithAi(jpeg, ensureCurrent(null).id));
+          ({ text: read, details } = await readWithAi(jpeg, ensureCurrent(null).id, model));
         } catch (e) {
           const reason = e instanceof AiUnavailable ? e : new AiUnavailable("it failed");
           if (reason.loggedOut) rememberAi({ ...ai, loggedIn: false });
@@ -686,7 +700,13 @@ export function ExtractScreen() {
         <p className="-mt-2 text-center text-xs text-muted">
           Read by AI
           {/* How long the whole wait was, photo to text (V33.1). */}
-          {last?.readBy === "ai" && last.reply && <span aria-label="Time taken"> in {seconds(last.ms)}</span>} ·{" "}
+          {last?.readBy === "ai" && last.reply && (
+            <>
+              <span aria-label="Model"> ({modelLabel(last.details?.model)})</span>
+              <span aria-label="Time taken"> in {seconds(last.ms)}</span>
+            </>
+          )}{" "}
+          ·{" "}
           <Link href="/extract/saved" className="font-medium text-accent">
             Saved texts
           </Link>{" "}
@@ -814,6 +834,34 @@ export function ExtractScreen() {
             </div>
           )}
         </section>
+      )}
+
+      {/* Which AI reads (V33.4): to compare them on real covers. Kept on this phone. */}
+      {ai.loggedIn && !reading && (
+        <label className="flex items-center justify-center gap-2 text-xs text-muted">
+          AI model
+          <select
+            aria-label="AI model"
+            value={model}
+            onChange={(e) => {
+              setModel(e.target.value);
+              try {
+                if (e.target.value) localStorage.setItem(MODEL_KEY, e.target.value);
+                else localStorage.removeItem(MODEL_KEY);
+              } catch {
+                // private mode: just for now
+              }
+            }}
+            className="rounded-md border border-line bg-surface px-2 py-1 text-xs text-foreground"
+          >
+            {AI_MODELS.map((m, i) => (
+              <option key={m.id} value={i === 0 ? "" : m.id}>
+                {m.label}
+                {i === 0 ? " (default)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
 
       {earlier.length > 0 && !reading && (

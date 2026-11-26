@@ -129,6 +129,21 @@ const t = suite();
   const renewed = (await page.context().cookies()).find((c) => c.name === "extract_login");
   check("…and the login renewed by the visit", renewed && renewed.expires > firstExpiry + 1, JSON.stringify([firstExpiry, renewed && renewed.expires]));
 
+  // Choosing the model on the phone (V33.4): kept per phone, and only models on the server's list.
+  const pick = page.getByLabel("AI model");
+  check("model choice: Gemini by default", await visible(pick) && (await pick.inputValue()) === "");
+  await pick.selectOption({ label: "Grok 4.20" });
+  await startOver();
+  await take(await cover(page, PHONE_TEXT));
+  await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 });
+  check("Grok chosen: the reading goes to Grok", (await ai()).requests.at(-1).model === "x-ai/grok-4.20", (await ai()).requests.at(-1).model);
+  check("…and the phone says so", (await page.getByLabel("Model", { exact: true }).innerText()).includes("Grok 4.20"));
+  await page.reload();
+  check("…the choice is kept on the phone", (await page.getByLabel("AI model").inputValue()) === "x-ai/grok-4.20");
+  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.8 Flash (default)" });
+  const sneaky = await page.request.post("/api/extract", { data: (await cover(page, PHONE_TEXT)), headers: { "content-type": "image/jpeg", "x-model": "openai/some-expensive-model" } });
+  check("a model not on the list isn't used: the default reads it", sneaky.ok() && (await ai()).requests.at(-1).model === "google/gemini-3.8-flash", (await ai()).requests.at(-1).model);
+
   // A model that refuses the speed settings (V32): asked again plainly, still read by AI.
   await ai("picky");
   await startOver();

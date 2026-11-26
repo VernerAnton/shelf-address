@@ -31,6 +31,8 @@ export type SavedText = {
   readings: number;
   /** How long the AI took for each of them, in ms, oldest first (V33.1). */
   aiMs: number[];
+  /** Which model read each of them (V33.4). */
+  aiModels: string[];
 };
 
 export class SavedTextError extends Error {
@@ -57,6 +59,7 @@ type Row = {
   cover_at: string | null;
   readings: number;
   ai_ms: string | null;
+  ai_models: string | null;
 };
 const fromRow = (r: Row): SavedText => ({
   id: r.id,
@@ -69,6 +72,7 @@ const fromRow = (r: Row): SavedText => ({
   coverAt: r.cover_key ? r.cover_at : null,
   readings: r.readings ?? 0,
   aiMs: (r.ai_ms ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0),
+  aiModels: (r.ai_models ?? "").split(",").filter(Boolean),
 });
 
 function validId(id: string) {
@@ -171,7 +175,10 @@ export async function listTexts(limit = 200): Promise<SavedText[]> {
       `SELECT t.*, (SELECT COUNT(*) FROM saved_text_readings r WHERE r.text_id = t.id) AS readings,
          (SELECT group_concat(ms) FROM (
             SELECT CAST(json_extract(r.details, '$.ms') AS INTEGER) AS ms FROM saved_text_readings r
-            WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_ms
+            WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_ms,
+         (SELECT group_concat(model) FROM (
+            SELECT json_extract(r.details, '$.model') AS model FROM saved_text_readings r
+            WHERE r.text_id = t.id ORDER BY r.read_at)) AS ai_models
        FROM saved_texts t ORDER BY t.created_at DESC LIMIT ?`,
     )
     .bind(limit)

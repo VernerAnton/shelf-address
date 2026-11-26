@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { getDb, getEnv } from "@/lib/cloudflare";
 import { tidyAiText } from "@/lib/extract-text";
+import { isAllowedModel } from "@/lib/ai-models";
 
 /**
  * Extract's AI reading (docs/spec-corrections.md §23): a back-cover photo is
@@ -178,8 +179,10 @@ type ChatBody = {
 const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
 /** Transcribes a back-cover photo (JPEG bytes) with the vision model. */
-export async function readWithAi(photo: ArrayBuffer, type: string): Promise<{ text: string; details: AiDetails }> {
-  const s = await settings();
+export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
+  const configured = await settings();
+  // A model the phone chose (V33.4), if it's one of ours; otherwise the default.
+  const s = isAllowedModel(chosen) ? { ...configured, model: chosen } : configured;
   if (!s.key) throw new ExtractError("AI reading isn't set up yet.", 503, "fallback");
   if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new ExtractError("That isn't a photo.", 415, "fallback");
   if (photo.byteLength === 0 || photo.byteLength > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");

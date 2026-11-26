@@ -870,3 +870,18 @@ migrations are applied and don't touch the same tables.
   so they're easy to grab. Quick taps on ↺ / ↻ all count now: each turn waits
   for the one before and starts from the newest picture (before, two quick
   taps could both start from the same picture, losing a turn).
+
+## 34. Choosing the AI model on the phone (V33.4).
+
+To compare models on real covers (the owner found Grok 4.20 on OpenRouter:
+$1.25/$2.50 per million tokens, ~0.55–0.66 s to the first word, ~85–98
+tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
+
+- Under Report a problem, a small **AI model** dropdown: Gemini 3.8 Flash
+  (default) or Grok 4.20. Kept per phone (localStorage `extract:model`).
+- The phone sends its choice as `X-Model`; the server uses it only if it's on
+  the list in `lib/ai-models.ts`, so nothing else can be chosen to spend on.
+  The speed settings (§29) go with it; if a model refuses them, the plain
+  retry applies.
+- The phone's line says "Read by AI (Grok 4.20) in 4.9 s"; the computer's
+  "read by AI (Grok 4.20) in 4.1 s"; reports name the model, as before.

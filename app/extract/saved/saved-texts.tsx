@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
 import { CoverPanel, coverUrl } from "./cover-panel";
+import { modelLabel } from "@/lib/ai-models";
 
 /** How often the list checks for new texts while it's on screen. */
 const REFRESH_MS = 5000;
@@ -263,6 +264,8 @@ export function SavedTexts() {
                 {when(text.createdAt)}
                 {text.updatedAt !== text.createdAt && ` · changed ${when(text.updatedAt)}`} ·{" "}
                 {text.source === "phone" ? "read by the phone's own reader — check it carefully" : "read by AI"}
+                {/* Which model (V33.4), while models are being compared. */}
+                {text.source !== "phone" && text.aiModels.length > 0 && ` (${[...new Set(text.aiModels.map(modelLabel))].join(", ")})`}
                 {/* How long the AI took (V33.1): one time per photo of the back. */}
                 {text.source !== "phone" && text.aiMs.length > 0 && ` in ${text.aiMs.map((ms) => `${(ms / 1000).toFixed(1)} s`).join(" + ")}`}
                 {text.editedOnComputerAt && " · corrected on the computer"}

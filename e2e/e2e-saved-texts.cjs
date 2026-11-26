@@ -179,7 +179,7 @@ const t = suite();
   check("no Download .txt any more", (await pc.getByRole("button", { name: "Download .txt" }).count()) === 0);
 
   // V33.1: how long the AI took, and a small picture editor — rotate, crop, undo.
-  check("computer: says which model read it and how long it took", /read by AI \(Gemini 3\.8 Flash · Nitro\) in \d+\.\d s/.test(await pc.getByRole("region", { name: "Selected text" }).locator("p").first().innerText()));
+  check("computer: says which model read it and how long it took", /read by AI \(Gemini 3\.1 Flash-Lite · no thinking\) in \d+\.\d s/.test(await pc.getByRole("region", { name: "Selected text" }).locator("p").first().innerText()));
   const coverSize = async () => jpegSize(await (await pc.request.get(`/api/extract/texts/${newest.id}/cover`)).body());
   const waitForSize = async (want) => {
     for (let i = 0; i < 20; i++) { const got = await coverSize(); if (want(got)) return got; await sleep(300); }

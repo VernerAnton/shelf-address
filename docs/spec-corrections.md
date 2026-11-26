@@ -921,3 +921,9 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   error, so Gemini 3.8 Flash read it instead"; if the default stops too, the
   "end may be missing" warning shows. Each reading keeps the model's own stop
   reason (`native_finish_reason`) and error message, and reports show them.
+- **V33.9 (the owner's choice after comparing in the shop):** Gemini 3.1
+  Flash-Lite, thinking off, is the default: about 4–6 s, as accurate as 3.8
+  Flash on the books compared, a third of the price. If it stops part-way
+  (one book did, every time), the server reads it again with 3.8 Flash · Nitro
+  (`FALLBACK_MODEL`), which read that book in full; the phone says so. BookOps
+  stays on 3.8 Flash · Nitro: Flash-Lite wasn't tried on its photos.

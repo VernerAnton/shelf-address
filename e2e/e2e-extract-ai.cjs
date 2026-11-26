@@ -69,12 +69,12 @@ const t = suite();
   check("…exactly, paragraphs kept, formatting marks dropped", text === "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.", JSON.stringify(text));
   check("…no warning", (await page.getByText(/check the text carefully|may be read wrong/).count()) === 0);
   const req = (await ai()).requests.at(-1);
-  check("asked Gemini 3.8 Flash with Nitro (V33.5) on OpenRouter, with the key from the server", req.model === "google/gemini-3.8-flash:nitro" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
+  check("asked Gemini 3.1 Flash-Lite (the default since V33.9) on OpenRouter, with the key from the server", req.model === "google/gemini-3.1-flash-lite" && req.auth === "Bearer test-openrouter-key" && req.temperature === 0, JSON.stringify({ ...req, prompt: undefined }));
   check("photo made smaller before sending (≤ 2000 px, JPEG)", req.imageType === "image/jpeg" && Math.max(req.width, req.height) === 2000 && req.imageBytes < 1500000, JSON.stringify({ w: req.width, h: req.height, bytes: req.imageBytes }));
   check("told to copy exactly, keep ä/ö/å, skip stickers and barcodes", /exactly, word for word/.test(req.prompt) && /ä, ö, å/.test(req.prompt) && /price stickers, barcodes/.test(req.prompt));
   check("room for a long answer (20,000 tokens)", req.maxTokens === 20000, String(req.maxTokens));
-  check("the least thinking Gemini 3.8 Flash accepts: low (V33.7)", req.reasoning && req.reasoning.effort === "low", JSON.stringify(req.reasoning));
-  check("…Nitro does the provider sorting itself: no sort of our own sent", !req.provider, JSON.stringify(req.provider));
+  check("…with thinking off", req.reasoning && req.reasoning.effort === "none", JSON.stringify(req.reasoning));
+  check("…and the fastest-answering provider asked for", req.provider && req.provider.sort === "latency", JSON.stringify(req.provider));
 
   // Start over sits at the top, right under the photo button (V26).
   const another = page.getByRole("button", { name: "Add another photo" });
@@ -115,7 +115,7 @@ const t = suite();
   const detail = await newest.locator("pre").innerText();
   check("…why it stopped, the tokens and the reply", /Stopped because: length — ran out of room/.test(detail) && /answer 20,000 of at most 20,000 \(thinking 19,988\)/.test(detail) && /Väinö Linnan romaani kertoo suomalaisesta/.test(detail), detail);
   const older = await reported[1].locator("pre").evaluate((el) => el.textContent);
-  check("…and who served it, with how much thinking was allowed", /served by Google AI Studio, thinking: low/.test(detail), detail);
+  check("…and who served it, with how much thinking was allowed", /served by Google AI Studio, thinking: none/.test(detail), detail);
   check("first report: no note, finished normally", /Note: \(none\)/.test(older) && /Stopped because: stop\n/.test(older), older);
   check("summary counts the reports", await visible(logPage.getByLabel("Summary").getByText(/2 reported from Extract/)));
   await logPage.close();
@@ -142,12 +142,12 @@ const t = suite();
   check("…and the phone says so", (await page.getByLabel("Model", { exact: true }).innerText()).includes("Gemini 3.8 Flash · standard"));
   await page.reload();
   check("…the choice is kept on the phone", (await page.getByLabel("AI model").inputValue()) === "google/gemini-3.8-flash");
-  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.8 Flash · Nitro (default)" });
+  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.1 Flash-Lite · no thinking (default)" });
   const sneaky = await page.request.post("/api/extract", { data: (await cover(page, PHONE_TEXT)), headers: { "content-type": "image/jpeg", "x-model": "openai/some-expensive-model" } });
-  check("a model not on the list isn't used: the default reads it", sneaky.ok() && (await ai()).requests.at(-1).model === "google/gemini-3.8-flash:nitro", (await ai()).requests.at(-1).model);
+  check("a model not on the list isn't used: the default reads it", sneaky.ok() && (await ai()).requests.at(-1).model === "google/gemini-3.1-flash-lite", (await ai()).requests.at(-1).model);
 
   // Flash-Lite: thinking off (V33.7); if a model won't switch it off after all, asked again with minimal.
-  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.1 Flash-Lite · no thinking" });
+  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.1 Flash-Lite · no thinking (default)" });
   await startOver();
   await take(await cover(page, PHONE_TEXT));
   await page.waitForFunction(() => /konekiväärikomppaniasta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 });
@@ -159,7 +159,7 @@ const t = suite();
   await take(await cover(page, PHONE_TEXT));
   check("cut off with an error: read again with the default, the whole text", await page.waitForFunction(() => /miljoona kappaletta/.test(document.querySelector("textarea")?.value ?? ""), null, { timeout: 30000 }).then(() => true, () => false));
   const pair = (await ai()).requests.slice(-2).map((r) => r.model);
-  check("…first Flash-Lite, then the default", JSON.stringify(pair) === JSON.stringify(["google/gemini-3.1-flash-lite", "google/gemini-3.8-flash:nitro"]), JSON.stringify(pair));
+  check("…first Flash-Lite, then 3.8 Flash · Nitro", JSON.stringify(pair) === JSON.stringify(["google/gemini-3.1-flash-lite", "google/gemini-3.8-flash:nitro"]), JSON.stringify(pair));
   check("…and the phone says so", await visible(page.getByText(/Gemini 3\.1 Flash-Lite · no thinking stopped part-way with an error, so Gemini 3\.8 Flash · Nitro read it instead/)));
   await ai("nonone");
   await startOver();
@@ -168,7 +168,7 @@ const t = suite();
   const stepDown = (await ai()).requests.slice(-2).map((r) => r.reasoning && r.reasoning.effort);
   check("…asked with none, then minimal", JSON.stringify(stepDown) === JSON.stringify(["none", "minimal"]), JSON.stringify(stepDown));
   await ai("ok");
-  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.8 Flash · Nitro (default)" });
+  await page.getByLabel("AI model").selectOption({ label: "Gemini 3.1 Flash-Lite · no thinking (default)" });
 
   // A model that refuses the speed settings (V32): asked again plainly, still read by AI.
   await ai("picky");

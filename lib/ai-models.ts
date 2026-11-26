@@ -14,13 +14,22 @@
  * "minimal" isn't on its list — so it's asked for "low". Two more to compare:
  * 3.1 Flash-Lite, where thinking can be off (and a third of the price), and
  * 3.6 Flash, which takes "minimal".
+ *
+ * V33.9, the owner's choice after comparing in the shop: Flash-Lite is the
+ * default — about 4–6 s, as accurate as 3.8 Flash on the books compared, a
+ * third of the price. On a book it stops part-way on (one did, every time),
+ * the server reads it again with 3.8 Flash · Nitro (FALLBACK_MODEL), which
+ * read that book in full.
  */
 export const AI_MODELS = [
+  { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite · no thinking", thinking: "none" },
   { id: "google/gemini-3.8-flash:nitro", label: "Gemini 3.8 Flash · Nitro", thinking: "low" },
   { id: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash · standard", thinking: "low" },
-  { id: "google/gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite · no thinking", thinking: "none" },
   { id: "google/gemini-3.6-flash", label: "Gemini 3.6 Flash · minimal thinking", thinking: "minimal" },
 ] as const;
+
+/** Reads again when a model stops part-way with an error (V33.8); also BookOps' model (V33.9). */
+export const FALLBACK_MODEL = "google/gemini-3.8-flash:nitro";
 
 export const DEFAULT_MODEL: string = AI_MODELS[0].id;
 

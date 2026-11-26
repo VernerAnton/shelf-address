@@ -7,7 +7,7 @@
  * not every commit — and keeping it in its own file makes the bump a one-line
  * diff that's obvious in review. A string, so "32.10" stays itself.
  */
-export const APP_VERSION = "33.8";
+export const APP_VERSION = "33.9";
 
 /** Is version `a` newer than `b`? Compared as whole number, then the part after the dot ("32.10" is newer than "32.9"). */
 export function isNewerVersion(a: string | number, b: string | number): boolean {

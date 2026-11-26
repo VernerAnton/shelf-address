@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { getDb, getEnv } from "@/lib/cloudflare";
 import { tidyAiText } from "@/lib/extract-text";
-import { isAllowedModel, leastThinking } from "@/lib/ai-models";
+import { FALLBACK_MODEL, isAllowedModel, leastThinking } from "@/lib/ai-models";
 
 /**
  * Extract's AI reading (docs/spec-corrections.md §23): a back-cover photo is
@@ -192,13 +192,13 @@ const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v :
 /**
  * Transcribes a back-cover photo. A chosen model that stops with an error
  * part-way (V33.8: Flash-Lite and 3.6 Flash both did, two thirds in) is
- * retried once with the default, so a cut-off text never arrives unannounced.
+ * retried once with 3.8 Flash · Nitro (V33.9), so a cut-off text never
+ * arrives unannounced.
  */
 export async function readWithAi(photo: ArrayBuffer, type: string, chosen?: string | null): Promise<{ text: string; details: AiDetails }> {
   const first = await readOnce(photo, type, chosen);
-  const configured = (await settings()).model;
-  if (first.details.finishReason !== "error" || first.details.requested === configured) return first;
-  const second = await readOnce(photo, type, null);
+  if (first.details.finishReason !== "error" || first.details.requested === FALLBACK_MODEL) return first;
+  const second = await readOnce(photo, type, FALLBACK_MODEL);
   const d = first.details;
   return { ...second, details: { ...second.details, retriedFrom: { model: d.requested ?? d.model, error: d.error ?? null, nativeFinishReason: d.nativeFinishReason ?? null, ms: d.ms } } };
 }

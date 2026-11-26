@@ -98,7 +98,7 @@ const t = suite();
   check("stored once, marked as read by AI", rows().length === 1 && rows()[0].text === AI_TEXT && rows()[0].source === "ai", JSON.stringify(rows()));
   const list = pc.locator("[aria-label='Saved texts']");
   check("computer: appears without reloading", await visible(list.getByRole("button", { name: /Väinö Linnan romaani/ }), 15000));
-  const shown = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
+  const shown = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text", { exact: true });
   check("computer: newest opened straight away, in full", await visible(shown) && (await shown.inputValue()).trim() === AI_TEXT);
 
   // A correction on the phone follows.
@@ -276,7 +276,7 @@ const t = suite();
   check("Copy copies the selected text", (await pc.evaluate(() => navigator.clipboard.readText())).includes("kaksi miljoonaa"));
 
   // Correcting on the computer.
-  const editBox = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text");
+  const editBox = pc.getByRole("region", { name: "Selected text" }).getByLabel("Text", { exact: true });
   await editBox.fill((await editBox.inputValue()).replace("Väinö Linnan romaani", "Väinö Linnan rakastettu romaani"));
   check("computer: correction saves by itself", await visible(pc.getByRole("status", { name: "Correction" }).getByText(/Correction saved/), 10000));
   const corrected = rows().find((r) => r.text.includes("rakastettu"));

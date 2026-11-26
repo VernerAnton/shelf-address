@@ -72,6 +72,7 @@ const IMAGE =
  */
 export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedText; button: string; onZoom: (src: string) => void; onChanged: () => Promise<void> }) {
   const [copied, setCopied] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Blob | null>(null);
   const [opening, setOpening] = useState(false);
@@ -165,6 +166,45 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
     apply(undo.blob, null);
   };
 
+  /**
+   * Download picture (V34.2): the "Save as" window, so the picture can go
+   * straight into the folder kept for them — which the browser then opens
+   * at next time (the `id`). Browsers without it (Firefox, Safari) download
+   * to the usual folder as before.
+   */
+  const downloadPicture = async () => {
+    type Picker = (options: {
+      suggestedName: string;
+      id: string;
+      startIn: string;
+      types: { description: string; accept: Record<string, string[]> }[];
+    }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>;
+    const picker = (window as unknown as { showSaveFilePicker?: Picker }).showSaveFilePicker;
+    try {
+      const picture = await current();
+      if (!picker) {
+        const url = URL.createObjectURL(picture);
+        Object.assign(document.createElement("a"), { href: url, download: fileName(text) }).click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+        return;
+      }
+      const handle = await picker({
+        suggestedName: fileName(text),
+        id: "front-covers",
+        startIn: "pictures",
+        types: [{ description: "JPEG picture", accept: { "image/jpeg": [".jpg", ".jpeg"] } }],
+      });
+      const file = await handle.createWritable();
+      await file.write(picture);
+      await file.close();
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch (e) {
+      // Closing the Save as window isn't an error.
+      if ((e as { name?: string })?.name !== "AbortError") setError("Couldn't save the picture. Try again, or use Copy picture.");
+    }
+  };
+
   const copyPicture = async () => {
     try {
       const png = current().then(async (picture) => {
@@ -195,9 +235,9 @@ export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedTex
           <button type="button" onClick={() => void copyPicture()} className={`${button} bg-accent text-accent-contrast`}>
             {copied ? "Picture copied ✓" : "Copy picture"}
           </button>
-          <a href={src} download={fileName(text)} className={`${button} border border-line bg-surface`}>
-            Download picture
-          </a>
+          <button type="button" onClick={() => void downloadPicture()} className={`${button} border border-line bg-surface`}>
+            {downloaded ? "Saved ✓" : "Download picture"}
+          </button>
         </div>
         <div role="group" aria-label="Edit the picture" className="grid grid-cols-2 gap-2">
           <button type="button" onClick={() => turn(-1)} aria-label="Rotate left" title="Turn a quarter to the left" className={`${button} border border-line bg-surface text-xl`}>

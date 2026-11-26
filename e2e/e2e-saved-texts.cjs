@@ -44,6 +44,13 @@ const t = suite();
   const page = await phone(b, t, { permissions: ["camera", "clipboard-read", "clipboard-write"] });
   // The computer: a desktop-sized window, its own browser session.
   const pcCtx = await b.newContext({ baseURL: BASE_URL, viewport: { width: 1280, height: 860 }, acceptDownloads: true, permissions: ["clipboard-read", "clipboard-write"] });
+  // The "Save as" window (V34.2), recorded instead of opened: what it was asked, and what was written.
+  await pcCtx.addInitScript(() => {
+    window.__saveAs = [];
+    window.showSaveFilePicker = async (options) => ({
+      createWritable: async () => ({ write: async (blob) => window.__saveAs.push({ options, bytes: blob.size, type: blob.type }), close: async () => {} }),
+    });
+  });
   const pc = await pcCtx.newPage();
   pc.setDefaultTimeout(20000);
   pc.on("pageerror", (e) => t.errors.push(String(e)));
@@ -167,10 +174,11 @@ const t = suite();
   await pc.setViewportSize({ width: 1280, height: 860 });
   await figure.getByRole("button", { name: "Copy picture" }).click();
   check("Copy picture puts the picture on the clipboard", await visible(figure.getByRole("button", { name: "Picture copied ✓" })) && (await pc.evaluate(async () => (await navigator.clipboard.read())[0].types)).includes("image/png"));
-  const picFile = pc.waitForEvent("download");
-  await figure.getByRole("link", { name: "Download picture" }).click();
-  const saved = await picFile;
-  check("Download picture: a .jpg named after the book", /^etukansi-vaino-linnan-romaani.*\.jpg$/.test(saved.suggestedFilename()), saved.suggestedFilename());
+  await figure.getByRole("button", { name: "Download picture" }).click();
+  check("Download picture: the Save as window, so a folder can be chosen", await visible(figure.getByRole("button", { name: "Saved ✓" })));
+  const saveAs = (await pc.evaluate(() => window.__saveAs))[0];
+  check("…a .jpg named after the book, the picture itself written", saveAs && /^etukansi-vaino-linnan-romaani.*\.jpg$/.test(saveAs.options.suggestedName) && saveAs.bytes > 10000 && saveAs.type === "image/jpeg", JSON.stringify(saveAs));
+  check("…and the folder remembered for next time (the same id each time)", saveAs && saveAs.options.id === "front-covers", JSON.stringify(saveAs && saveAs.options));
   await figure.getByRole("img", { name: "Front cover" }).click();
   const full = pc.getByRole("dialog", { name: "Front cover, full size" });
   check("click: full size", await visible(full));

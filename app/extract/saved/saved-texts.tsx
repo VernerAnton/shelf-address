@@ -289,15 +289,29 @@ export function SavedTexts() {
                       text.coverAt ? "md:h-[calc(100dvh-28rem)] xl:h-[calc(100dvh-24.5rem)]" : "md:h-[calc(100dvh-24.5rem)]"
                     }`}
                   />
-                  {/* In the text box's corner (V34): no line of its own, so the box keeps its height and the buttons their row. */}
-                  <p role="status" aria-label="Correction" className={`pointer-events-none absolute right-5 bottom-3 max-w-[70%] rounded-md bg-surface/90 px-2 text-right text-xs ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
-                    {draft?.id === text.id
-                      ? draft.status === "saving"
-                        ? "Saving…"
-                        : draft.status === "saved"
-                          ? "✓ Correction saved. The phone can't change this text any more."
-                          : (draft.error ?? "Couldn't save the correction.")
-                      : "Corrections save by themselves."}
+                  {/*
+                    Just under the text box's bottom-right corner, outside it (V34.2): a turning ↻ while a correction
+                    saves, ✓ once saved — no words to distract. Errors stay in words. Screen readers get the words.
+                  */}
+                  <p
+                    role="status"
+                    aria-label="Correction"
+                    title={draft?.id === text.id && draft.status === "saved" ? "Correction saved — the phone can't change this text any more" : undefined}
+                    className={`pointer-events-none absolute top-full right-1 flex h-3 items-center gap-1 text-sm leading-none ${draft?.status === "error" ? "text-danger" : "text-muted"}`}
+                  >
+                    {draft?.id === text.id && draft.status === "saving" && (
+                      <>
+                        <span aria-hidden className="inline-block animate-spin">↻</span>
+                        <span className="sr-only">Saving…</span>
+                      </>
+                    )}
+                    {draft?.id === text.id && draft.status === "saved" && (
+                      <>
+                        <span aria-hidden>✓</span>
+                        <span className="sr-only">Correction saved. The phone can&apos;t change this text any more.</span>
+                      </>
+                    )}
+                    {draft?.id === text.id && draft.status === "error" && <span className="text-xs">{draft.error ?? "Couldn't save the correction."}</span>}
                   </p>
                   </div>
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">

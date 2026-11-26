@@ -961,3 +961,10 @@ listing.
   into the text box's bottom corner (no line of its own), the ISBN number is a
   size smaller, and beside a cover the text column gets 2rem more (the
   cover's width budget is 68rem, was 66rem).
+- **V34.2:** Download picture opens the "Save as" window (Edge and Chrome:
+  `showSaveFilePicker`), so the picture goes straight into the folder kept for
+  covers; the browser opens that folder again next time (`id: "front-covers"`).
+  Browsers without it download as before.
+- **V34.3:** no words inside the text box: a turning ↻ while a correction
+  saves and ✓ once saved, just under the box's bottom-right corner, outside
+  it (words for screen readers, and for errors).

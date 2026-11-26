@@ -314,6 +314,18 @@ const t = suite();
   check("with an ISBN: shown on the button", (await isbnBtn.innerText()) === "978-951023076-3", await isbnBtn.innerText());
   await isbnBtn.click();
   check("…a click copies it", await visible(pc.getByRole("button", { name: /Copy ISBN/ }).getByText("ISBN copied ✓")) && (await pc.evaluate(() => navigator.clipboard.readText())) === "9789510230763");
+  // V34.5: a second ISBN — just below the first, in the same space.
+  const rowBefore = await pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: "Delete" }).boundingBox();
+  sql(`UPDATE saved_texts SET isbn2 = '9789529362530'`);
+  await sleep(6000); // the list refreshes itself
+  const pair = pc.getByRole("group", { name: "ISBNs" });
+  const [b1, b2] = await Promise.all([pair.getByRole("button", { name: "Copy ISBN 9789510230763" }).boundingBox(), pair.getByRole("button", { name: "Copy second ISBN 9789529362530" }).boundingBox()]);
+  check("two ISBNs: the second just below the first", b1 && b2 && b2.y >= b1.y + b1.height - 1 && Math.abs(b2.x - b1.x) < 2, JSON.stringify([b1, b2]));
+  const rowAfter = await pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: "Delete" }).boundingBox();
+  check("…in the same space: the buttons don't move", rowBefore && rowAfter && Math.abs(rowAfter.y - rowBefore.y) < 1 && Math.abs((b2.y + b2.height) - (b1.y + 48)) < 2, JSON.stringify([rowBefore, rowAfter]));
+  await pair.getByRole("button", { name: /second ISBN/ }).click();
+  check("…each copies its own", (await pc.evaluate(() => navigator.clipboard.readText())) === "9789529362530" && await visible(pair.getByText("ISBN copied ✓")));
+  sql(`UPDATE saved_texts SET isbn2 = NULL`);
   pc.once("dialog", (d) => d.accept());
   await pc.getByRole("button", { name: "Delete" }).click();
   await sleep(1000);

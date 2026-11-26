@@ -296,7 +296,8 @@ async function readOnce(photo: ArrayBuffer, type: string, chosen?: string | null
 /** What the model is asked for an ISBN (V34): the number only — kept apart from the text's instructions. */
 const ISBN_INSTRUCTIONS = `This is a photo of part of a book (usually its back cover).
 Find the book's ISBN: printed after "ISBN", or the digits under the barcode.
-Answer with the ISBN's digits only (10 or 13 digits; an X may end a 10-digit one), nothing else.
+Some books print more than one ISBN (for example one for each binding): then give every one, each on its own line.
+Answer with the ISBNs' digits only (10 or 13 digits; an X may end a 10-digit one), nothing else.
 If there is no ISBN in the photo, answer NONE.`;
 
 /**
@@ -319,7 +320,7 @@ export async function readIsbnWithAi(photo: ArrayBuffer, type: string): Promise<
       body: JSON.stringify({
         model: "google/gemini-3.1-flash-lite",
         temperature: 0,
-        max_tokens: 60,
+        max_tokens: 120,
         reasoning: { effort: "none" },
         provider: { sort: "latency" },
         messages: [

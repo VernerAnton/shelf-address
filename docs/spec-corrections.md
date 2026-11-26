@@ -973,3 +973,21 @@ listing.
   the front cover are in its hover text — it had wrapped onto two lines and
   pushed the text box down. A text read by the phone's own reader still says
   so in red ("check it"). The save icons explain themselves on hover too.
+
+## 36. A second ISBN (V34.5).
+
+Some books print two ISBNs (one per binding, say); only the first was kept.
+
+- The ISBN reading (§35) asks for every ISBN on the photo, one per line;
+  `isbnsInAnswer` (lib/isbn.ts) checks each, makes it ISBN-13 and keeps a
+  book number once — an old book's 10- and 13-digit forms of one ISBN count
+  once — at most two. The phone's barcode reader and the AI now run at the
+  same time: a barcode still shows at once, a second ISBN from the AI follows.
+- **Phone:** the second appears in its own field on the Extract title's line
+  (the heading moved into ExtractScreen for that); it can be corrected or
+  emptied (it goes). Emptying the first moves the second up.
+- **Computer:** with two, the ISBN button's space holds two half-height green
+  buttons, the second just below the first; nothing else moves. Each copies
+  its own number.
+- `saved_texts.isbn2` (migration 0014); only kept alongside a first, and
+  never the same number as the first.

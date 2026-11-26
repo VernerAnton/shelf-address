@@ -37,6 +37,8 @@ export type SavedText = {
   /** The book's ISBN-13, and where it came from: barcode, ai or typed (V34). */
   isbn: string | null;
   isbnSource: string | null;
+  /** A second ISBN, for books that print two (V34.5). */
+  isbn2: string | null;
 };
 
 export class SavedTextError extends Error {
@@ -66,6 +68,7 @@ type Row = {
   ai_models: string | null;
   isbn: string | null;
   isbn_source: string | null;
+  isbn2: string | null;
 };
 const fromRow = (r: Row): SavedText => ({
   id: r.id,
@@ -81,6 +84,7 @@ const fromRow = (r: Row): SavedText => ({
   aiModels: (r.ai_models ?? "").split(",").filter(Boolean),
   isbn: r.isbn,
   isbnSource: r.isbn_source,
+  isbn2: r.isbn2 ?? null,
 });
 
 function validId(id: string) {
@@ -141,7 +145,7 @@ function validIsbn(raw: unknown): { isbn: string | null; source: string | null }
 
 export async function saveText(
   id: string,
-  body: { text?: unknown; source?: unknown; createdAt?: unknown; updatedAt?: unknown; isbn?: unknown; isbnSource?: unknown },
+  body: { text?: unknown; source?: unknown; createdAt?: unknown; updatedAt?: unknown; isbn?: unknown; isbnSource?: unknown; isbn2?: unknown },
 ): Promise<SaveResult> {
   validId(id);
   if (typeof body.text !== "string") throw new SavedTextError("Bad text.");
@@ -155,10 +159,13 @@ export async function saveText(
     .bind(id)
     .first<{ updated_at: string; edited_on_computer_at: string | null }>();
   const { isbn } = validIsbn(body.isbn);
+  // The second only alongside a first, and only if it's another book number (V34.5).
+  const second = validIsbn(body.isbn2).isbn;
+  const isbn2 = isbn && second && second !== isbn ? second : null;
   const isbnSource = isbn && ["barcode", "ai", "typed"].includes(String(body.isbnSource)) ? String(body.isbnSource) : isbn ? "typed" : null;
   if (existing?.edited_on_computer_at) {
     // The computer's text wins (§26), but the phone's ISBN still counts (V34).
-    if (isbn) await db.prepare("UPDATE saved_texts SET isbn = ?, isbn_source = ? WHERE id = ?").bind(isbn, isbnSource, id).run();
+    if (isbn) await db.prepare("UPDATE saved_texts SET isbn = ?, isbn_source = ?, isbn2 = ? WHERE id = ?").bind(isbn, isbnSource, isbn2, id).run();
     return "editedOnComputer";
   }
   if (existing && existing.updated_at > updatedAt) return "older";
@@ -170,11 +177,11 @@ export async function saveText(
   }
   await db
     .prepare(
-      `INSERT INTO saved_texts (id, text, source, created_at, updated_at, isbn, isbn_source) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO saved_texts (id, text, source, created_at, updated_at, isbn, isbn_source, isbn2) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (id) DO UPDATE SET text = excluded.text, source = excluded.source, updated_at = excluded.updated_at,
-         isbn = excluded.isbn, isbn_source = excluded.isbn_source`,
+         isbn = excluded.isbn, isbn_source = excluded.isbn_source, isbn2 = excluded.isbn2`,
     )
-    .bind(id, text, source, createdAt, updatedAt, isbn, isbnSource)
+    .bind(id, text, source, createdAt, updatedAt, isbn, isbnSource, isbn2)
     .run();
   await prune();
   return "saved";

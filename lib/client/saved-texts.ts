@@ -17,6 +17,8 @@ export type OutgoingText = {
   /** The book's ISBN-13 and where it came from (V34). */
   isbn?: string | null;
   isbnSource?: "barcode" | "ai" | "typed" | null;
+  /** A second ISBN, for books that print two (V34.5). */
+  isbn2?: string | null;
 };
 export type SyncResult = "saved" | "waiting" | "loggedout" | "editedOnComputer";
 

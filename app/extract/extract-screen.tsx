@@ -19,7 +19,16 @@ const LOGIN_KEY = "extract:login";
 /** The saved text the screen is working on (§24): its id, when it was started, how it was read. */
 const CURRENT_KEY = "extract:current";
 type IsbnSource = "barcode" | "ai" | "typed";
-type Current = { id: string; createdAt: string; source: "ai" | "phone"; cover?: CoverResult; isbn?: string | null; isbnSource?: IsbnSource | null };
+type Current = {
+  id: string;
+  createdAt: string;
+  source: "ai" | "phone";
+  cover?: CoverResult;
+  isbn?: string | null;
+  isbnSource?: IsbnSource | null;
+  /** A second ISBN, for books that print two (V34.5). */
+  isbn2?: string | null;
+};
 /**
  * Every text this phone has read, kept on the phone for 7 days (§28) so Start
  * over never loses one — even on a phone that isn't logged in.
@@ -34,6 +43,7 @@ type Earlier = {
   cover?: CoverResult;
   isbn?: string | null;
   isbnSource?: IsbnSource | null;
+  isbn2?: string | null;
 };
 const HISTORY_DAYS = 7;
 /** Front covers go to the computer at most this big (§28). */
@@ -98,11 +108,10 @@ function when(iso: string) {
 }
 
 /**
- * The book's ISBN in a photo (V34): the barcode, read on the phone (exact,
- * instant); failing that, a printed ISBN, read by the AI on its own — a quick
- * request apart from the text's, so the text's instructions stay as they are.
+ * The book's ISBN from a barcode in the photo, read on the phone (V34): exact
+ * and instant, but only the one barcode.
  */
-async function findIsbn(bitmap: ImageBitmap, jpeg: Blob | null): Promise<{ isbn13: string; source: IsbnSource } | null> {
+async function barcodeIsbn(bitmap: ImageBitmap): Promise<string | null> {
   try {
     const canvas = document.createElement("canvas");
     const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
@@ -110,21 +119,33 @@ async function findIsbn(bitmap: ImageBitmap, jpeg: Blob | null): Promise<{ isbn1
     canvas.height = Math.round(bitmap.height * scale);
     canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const { readBarcode } = await import("@/lib/client/bookops");
-    const fromBarcode = await readBarcode(canvas).catch(() => null);
+    const found = await readBarcode(canvas).catch(() => null);
     canvas.width = canvas.height = 0;
-    if (fromBarcode) return { isbn13: fromBarcode, source: "barcode" };
-  } catch {
-    // no barcode reading here: the AI, then
-  }
-  if (!jpeg) return null;
-  try {
-    const response = await fetch("/api/extract/isbn", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg" } });
-    const body = (await response.json().catch(() => null)) as { isbn13?: string | null } | null;
-    return response.ok && body?.isbn13 ? { isbn13: body.isbn13, source: "ai" } : null;
+    return found;
   } catch {
     return null;
   }
 }
+
+/**
+ * Every ISBN printed in the photo, read by the AI on its own (V34, all of
+ * them since V34.5: some books print two) — a quick request apart from the
+ * text's, so the text's instructions stay as they are. Checked, as ISBN-13s.
+ */
+async function aiIsbns(jpeg: Blob | null): Promise<string[]> {
+  if (!jpeg) return [];
+  try {
+    const response = await fetch("/api/extract/isbn", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg" } });
+    const body = (await response.json().catch(() => null)) as { isbns?: string[]; isbn13?: string | null } | null;
+    if (!response.ok || !body) return [];
+    return Array.isArray(body.isbns) ? body.isbns : body.isbn13 ? [body.isbn13] : [];
+  } catch {
+    return [];
+  }
+}
+
+/** The barcode's first, then the AI's, each once, at most two. */
+const mergeIsbns = (...lists: (string | null | undefined)[][]) => [...new Set(lists.flat().filter((x): x is string => Boolean(x)))].slice(0, 2);
 
 /** A small copy for the photo log's list. */
 async function thumbnail(bitmap: ImageBitmap): Promise<Blob | null> {
@@ -317,6 +338,7 @@ export function ExtractScreen() {
   const [model, setModel] = useState(chosenModel);
   // The ISBN field (V34): what's shown/typed, and a line under it.
   const [isbnInput, setIsbnInput] = useState("");
+  const [isbn2Input, setIsbn2Input] = useState("");
   const [isbnNote, setIsbnNote] = useState<{ kind: "ok" | "warn" | "busy"; text: string } | null>(null);
   const isbnRef = useRef<HTMLInputElement>(null);
   // The text as it is right now (an ISBN found after the text was read must be saved with the new text).
@@ -354,6 +376,7 @@ export function ExtractScreen() {
       current.current = cur ?? null;
       setCover(cur?.cover ?? null);
       setIsbnInput(cur?.isbn ? formatIsbn(cur.isbn) : "");
+      setIsbn2Input(cur?.isbn2 ? formatIsbn(cur.isbn2) : "");
       const cutoff = new Date(Date.now() - HISTORY_DAYS * 24 * 3600 * 1000).toISOString();
       const kept = (history ?? []).filter((e) => e.updatedAt >= cutoff);
       setEarlier(kept);
@@ -436,6 +459,7 @@ export function ExtractScreen() {
         updatedAt: now,
         isbn: isbnNow.isbn ?? null,
         isbnSource: isbnNow.isbnSource ?? null,
+        isbn2: isbnNow.isbn2 ?? null,
       })
         .then(syncTexts)
         .then((result) => {
@@ -485,21 +509,47 @@ export function ExtractScreen() {
     void kvSet(LAST_KEY, next).catch(() => {});
   };
 
-  /** Puts an ISBN on the current text (or clears it) and saves it with the text (V34). */
-  const setIsbn = (isbn13: string | null, source: IsbnSource | null) => {
+  /**
+   * Puts the ISBNs on the current text and saves them with it (V34; a second
+   * since V34.5). `undefined` leaves one as it is. Clearing the first while
+   * there's a second moves the second up.
+   */
+  const setIsbns = (first: string | null | undefined, source: IsbnSource | null, second?: string | null) => {
     const cur = ensureCurrent(null);
-    current.current = { ...cur, isbn: isbn13, isbnSource: isbn13 ? source : null };
+    let isbn = first === undefined ? (cur.isbn ?? null) : first;
+    let isbn2 = second === undefined ? (cur.isbn2 ?? null) : second;
+    let isbnSource = first === undefined ? (cur.isbnSource ?? null) : isbn ? source : null;
+    const promoted = !isbn && Boolean(isbn2);
+    if (promoted) [isbn, isbn2, isbnSource] = [isbn2, null, "typed"];
+    if (isbn2 === isbn) isbn2 = null;
+    current.current = { ...cur, isbn, isbnSource, isbn2 };
     void kvSet(CURRENT_KEY, current.current);
-    if (source !== "typed") setIsbnInput(isbn13 ? formatIsbn(isbn13) : "");
+    if (source !== "typed" || first === undefined || promoted) setIsbnInput(isbn ? formatIsbn(isbn) : "");
+    if (source !== "typed" || second === undefined) setIsbn2Input(isbn2 ? formatIsbn(isbn2) : "");
     saveSoon(latestText.current, null, source === "typed" ? SAVE_AFTER_MS : 0);
   };
 
-  const showFound = (found: { isbn13: string; source: IsbnSource } | null) => {
-    if (found) {
-      setIsbn(found.isbn13, found.source);
-      setIsbnNote({ kind: "ok", text: found.source === "barcode" ? "✓ From the barcode" : "✓ Read by AI — check it against the book" });
-    }
-    return found;
+  /** ISBNs found in a photo: the first into the field, a different second into the second field. */
+  const showFound = (isbns: string[], source: IsbnSource) => {
+    if (!isbns.length) return false;
+    setIsbns(isbns[0], source, isbns[1] ?? null);
+    const two = isbns.length > 1 ? " — and a second ISBN, by the title" : "";
+    setIsbnNote({ kind: "ok", text: (source === "barcode" ? "✓ From the barcode" : "✓ Read by AI — check it against the book") + two });
+    return true;
+  };
+
+  /**
+   * Looks for the ISBNs in a photo: the barcode on the phone and the AI at the
+   * same time. A barcode shows at once; a second ISBN from the AI follows.
+   */
+  const lookForIsbns = async (bitmap: ImageBitmap, jpeg: Blob | null, onlyIfEmpty: boolean) => {
+    const fromAi = aiIsbns(jpeg);
+    const barcode = await barcodeIsbn(bitmap);
+    if (barcode && !(onlyIfEmpty && current.current?.isbn)) showFound([barcode], "barcode");
+    const all = mergeIsbns([barcode], await fromAi);
+    if (onlyIfEmpty && current.current?.isbn && current.current.isbn !== barcode) return all.length > 0;
+    if (all.length) showFound(all, barcode ? "barcode" : "ai");
+    return all.length > 0;
   };
 
   /** The green ISBN button: photograph just the ISBN (or the barcode). */
@@ -510,7 +560,7 @@ export function ExtractScreen() {
     try {
       bitmap = await createImageBitmap(file);
       const jpeg = await forAi(bitmap).catch(() => null);
-      if (!showFound(await findIsbn(bitmap, jpeg))) setIsbnNote({ kind: "warn", text: "No ISBN found in that photo. Try closer, or type it in." });
+      if (!(await lookForIsbns(bitmap, jpeg, false))) setIsbnNote({ kind: "warn", text: "No ISBN found in that photo. Try closer, or type it in." });
     } catch {
       setIsbnNote({ kind: "warn", text: "Couldn't read that photo. Try again, or type the ISBN in." });
     } finally {
@@ -519,18 +569,19 @@ export function ExtractScreen() {
     }
   };
 
-  /** Typing in the field: saved once it's a valid ISBN (or emptied). */
-  const typeIsbn = (value: string) => {
-    setIsbnInput(value);
+  /** Typing in either field: saved once it's a valid ISBN (or emptied). */
+  const typeIsbn = (value: string, which: 1 | 2) => {
+    (which === 1 ? setIsbnInput : setIsbn2Input)(value);
     const digits = value.replace(/[\s-]/g, "");
+    const put = (isbn: string | null) => (which === 1 ? setIsbns(isbn, "typed") : setIsbns(undefined, "typed", isbn));
     if (!digits) {
-      setIsbn(null, null);
+      put(null);
       setIsbnNote(null);
       return;
     }
     const parsed = parseIsbn(digits);
     if (parsed.ok) {
-      setIsbn(parsed.isbn13, "typed");
+      put(parsed.isbn13);
       setIsbnNote({ kind: "ok", text: "✓ Saved" });
     } else if (digits.length >= 10) setIsbnNote({ kind: "warn", text: parsed.reason });
     else setIsbnNote(null);
@@ -554,7 +605,7 @@ export function ExtractScreen() {
       let details: AiDetails | null = null;
       let why: string | null = null;
       // The ISBN, if it's on this photo too (V34): looked for alongside the reading, so no extra wait.
-      const isbnSearch = ai.loggedIn && !current.current?.isbn ? findIsbn(bitmap, jpeg) : null;
+      const isbnSearch = ai.loggedIn && !current.current?.isbn ? lookForIsbns(bitmap, jpeg, true) : null;
       if (ai.loggedIn) {
         try {
           if (!jpeg) throw new AiUnavailable("the photo couldn't be prepared");
@@ -599,7 +650,7 @@ export function ExtractScreen() {
         return;
       }
       change(text.trim() ? `${text.trim()}\n\n${read}` : read, readBy);
-      if (isbnSearch && !current.current?.isbn) showFound(await isbnSearch);
+      if (isbnSearch) await isbnSearch;
       setNote(
         early
           ? { kind: "warn", text: "The AI stopped early — the end of the text may be missing. Take another photo of the rest." }
@@ -712,6 +763,7 @@ export function ExtractScreen() {
         cover: cur?.cover,
         isbn: cur?.isbn ?? null,
         isbnSource: cur?.isbnSource ?? null,
+        isbn2: cur?.isbn2 ?? null,
       };
       list = [entry, ...earlier.filter((e) => e.id !== entry.id)];
     }
@@ -721,6 +773,7 @@ export function ExtractScreen() {
     latestText.current = "";
     setText("");
     setIsbnInput("");
+    setIsbn2Input("");
     setIsbnNote(null);
     void kvSet(TEXT_KEY, "");
     setNote(null);
@@ -746,18 +799,46 @@ export function ExtractScreen() {
   const openEarlier = (e: Earlier) => {
     const list = putAway().filter((x) => x.id !== e.id);
     keepEarlier(list);
-    current.current = { id: e.id, createdAt: e.createdAt, source: e.source, cover: e.cover, isbn: e.isbn ?? null, isbnSource: e.isbnSource ?? null };
+    current.current = { id: e.id, createdAt: e.createdAt, source: e.source, cover: e.cover, isbn: e.isbn ?? null, isbnSource: e.isbnSource ?? null, isbn2: e.isbn2 ?? null };
     void kvSet(CURRENT_KEY, current.current);
     latestText.current = e.text;
     setText(e.text);
     setIsbnInput(e.isbn ? formatIsbn(e.isbn) : "");
+    setIsbn2Input(e.isbn2 ? formatIsbn(e.isbn2) : "");
     void kvSet(TEXT_KEY, e.text);
     setCover(e.cover ?? null);
     setShowEarlier(false);
     window.scrollTo({ top: 0 });
   };
 
-  if (!loaded) return <p className="text-muted">Loading…</p>;
+  /**
+   * The page heading, and beside it the second ISBN when a book has two
+   * (V34.5) — on the title's line, so it takes no room from the rest.
+   */
+  const heading = (
+    <div className="flex min-h-11 items-center gap-3">
+      <h1 className="shrink-0 text-2xl font-semibold tracking-tight">Extract</h1>
+      {loaded && ai.loggedIn && isbn2Input && (
+        <input
+          aria-label="Second ISBN"
+          title="This book prints a second ISBN"
+          value={isbn2Input}
+          onChange={(e) => typeIsbn(e.target.value, 2)}
+          inputMode="numeric"
+          autoComplete="off"
+          className="h-11 min-w-0 flex-1 rounded-xl border-2 border-isbn bg-surface px-3 font-mono text-base outline-none"
+        />
+      )}
+    </div>
+  );
+
+  if (!loaded)
+    return (
+      <>
+        {heading}
+        <p className="text-muted">Loading…</p>
+      </>
+    );
 
   const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
 
@@ -767,6 +848,7 @@ export function ExtractScreen() {
 
   return (
     <>
+      {heading}
       {!has && (
         <p className="text-sm text-muted">
           Photograph a book&apos;s back-cover text to get it onto the computer — for making a new back cover. Fill the picture with
@@ -839,7 +921,7 @@ export function ExtractScreen() {
             <input
               aria-label="ISBN number"
               value={isbnInput}
-              onChange={(e) => typeIsbn(e.target.value)}
+              onChange={(e) => typeIsbn(e.target.value, 1)}
               inputMode="numeric"
               autoComplete="off"
               placeholder="Photograph it, or type it"

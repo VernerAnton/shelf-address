@@ -111,7 +111,9 @@ async function chat(req, res) {
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
   // Extract's ISBN reading (V34): digits only — or NONE with ?isbn=none.
   if (req.headers["x-title"] === "Shelf-Address Extract ISBN") {
-    return json(res, 200, { model: body.model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: aiIsbn === "none" ? "NONE" : "9789510230763" } }] });
+    // ?isbn=two: a book printing two ISBNs; ?isbn=same: one ISBN in its 10- and 13-digit forms (V34.5).
+    const answers = { none: "NONE", two: "9789510230763\n978-952-93-6253-0", same: "951-0-23076-6\n9789510230763" };
+    return json(res, 200, { model: body.model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: answers[aiIsbn] ?? "9789510230763" } }] });
   }
   if (req.headers["x-title"] === "Shelf-Address BookOps") {
     const answer = aiBook === "garbage" ? "Sorry, I can't make out these photos." : "```json\n" + JSON.stringify(BOOKOPS[aiBook] ?? BOOKOPS.plain) + "\n```";

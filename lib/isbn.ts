@@ -80,3 +80,22 @@ export function parseIsbn(raw: string): IsbnParse {
 export function formatIsbn(isbn13: string): string {
   return `${isbn13.slice(0, 3)}-${isbn13.slice(3, 12)}-${isbn13.slice(12)}`;
 }
+
+/**
+ * The ISBNs in an AI's answer to "what ISBNs are in this photo" (V34.5): one
+ * per line (or separated by commas), each checked with its check digit, as
+ * ISBN-13, the same book number only once — an old book printing the 10- and
+ * the 13-digit form of one ISBN counts once — at most two. "NONE" or nothing
+ * valid: none.
+ */
+export function isbnsInAnswer(answer: string): string[] {
+  if (/^\s*NONE\s*$/i.test(answer)) return [];
+  const found: string[] = [];
+  for (const part of answer.split(/[\n,;]+/)) {
+    const digits = part.replace(/^[^\d]*ISBN[^\d]*/i, "").replace(/[^\dX]/gi, "");
+    if (!digits) continue;
+    const parsed = parseIsbn(digits);
+    if (parsed.ok && !found.includes(parsed.isbn13)) found.push(parsed.isbn13);
+  }
+  return found.slice(0, 2);
+}

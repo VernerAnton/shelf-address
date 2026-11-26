@@ -114,6 +114,41 @@ const t = suite();
   const savedIsbn = sql("SELECT isbn, isbn_source FROM saved_texts ORDER BY updated_at DESC LIMIT 1")[0];
   check("…stored with the text, as ISBN-13", savedIsbn && savedIsbn.isbn === "9789510230763" && savedIsbn.isbn_source === "typed", JSON.stringify(savedIsbn));
 
+  // V34.5: a book printing two ISBNs — the second in its own field, by the Extract title.
+  const second = page.getByLabel("Second ISBN");
+  check("one ISBN: no second field", (await second.count()) === 0);
+  const isbnPhoto = async (mode, lines) => {
+    await fetch(`${BOOKS}/__ai?isbn=${mode}`, { method: "POST" });
+    const cam = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+    await isbnButton.click();
+    await (await cam).setFiles({ name: "ISBN.jpg", mimeType: "image/jpeg", buffer: await cover(page, lines) });
+  };
+  await isbnPhoto("same", ["ISBN 951-0-23076-6", "9789510230763"]);
+  await visible(isbnRow.getByText(/✓ Read by AI/), 15000);
+  await sleep(500);
+  check("the 10- and 13-digit forms of one ISBN: still one", (await isbnField.inputValue()) === "978-951023076-3" && (await second.count()) === 0, JSON.stringify([await isbnField.inputValue(), await second.count()]));
+  await isbnPhoto("two", ["ISBN 978-951-0-23076-3 (sid.)", "ISBN 978-952-93-6253-0 (nid.)"]);
+  check("two different ISBNs: the second appears", await visible(second, 15000) && (await second.inputValue()) === "978-952936253-0" && (await isbnField.inputValue()) === "978-951023076-3", JSON.stringify([await isbnField.inputValue(), await second.inputValue().catch(() => "")]));
+  check("…the note says so", await visible(isbnRow.getByText(/and a second ISBN, by the title/)));
+  const [titleBox, secondBox] = await Promise.all([page.getByRole("heading", { name: "Extract" }).boundingBox(), second.boundingBox()]);
+  check("…on the same line as the Extract title, to its right", titleBox && secondBox && secondBox.x > titleBox.x + titleBox.width && Math.abs(secondBox.y + secondBox.height / 2 - (titleBox.y + titleBox.height / 2)) < 12, JSON.stringify([titleBox, secondBox]));
+  await sleep(1500);
+  let both = sql("SELECT isbn, isbn2 FROM saved_texts ORDER BY updated_at DESC LIMIT 1")[0];
+  check("…both stored with the text", both && both.isbn === "9789510230763" && both.isbn2 === "9789529362530", JSON.stringify(both));
+  await page.reload();
+  check("…and kept on the phone across closing the app", (await page.getByLabel("Second ISBN").inputValue().catch(() => "")) === "978-952936253-0");
+  await page.getByLabel("Second ISBN").fill("");
+  await sleep(1500);
+  both = sql("SELECT isbn, isbn2 FROM saved_texts ORDER BY updated_at DESC LIMIT 1")[0];
+  check("emptying the second: it goes, the first stays", (await page.getByLabel("Second ISBN").count()) === 0 && both.isbn === "9789510230763" && both.isbn2 === null, JSON.stringify(both));
+  await isbnPhoto("two", ["ISBN 978-951-0-23076-3", "ISBN 978-952-93-6253-0"]);
+  await visible(page.getByLabel("Second ISBN"), 15000);
+  await page.getByRole("region", { name: "ISBN" }).getByLabel("ISBN number").fill("");
+  await sleep(1500);
+  both = sql("SELECT isbn, isbn2 FROM saved_texts ORDER BY updated_at DESC LIMIT 1")[0];
+  check("emptying the first: the second moves up into its place", (await page.getByRole("region", { name: "ISBN" }).getByLabel("ISBN number").inputValue()) === "978-952936253-0" && (await page.getByLabel("Second ISBN").count()) === 0 && both.isbn === "9789529362530" && both.isbn2 === null, JSON.stringify(both));
+  await fetch(`${BOOKS}/__ai?isbn=found`, { method: "POST" });
+
   // Report a reading (V26): the note is optional.
   const reportArea = page.getByRole("region", { name: "Report a problem" });
   await reportArea.getByRole("button", { name: "Report a problem" }).click();

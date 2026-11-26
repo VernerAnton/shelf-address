@@ -43,7 +43,8 @@ export function SavedTexts() {
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [isbnCopied, setIsbnCopied] = useState(false);
+  // Which ISBN was just copied: 1, 2 (V34.5: some books print two), or 0.
+  const [isbnCopied, setIsbnCopied] = useState<0 | 1 | 2>(0);
   // The picture shown full size (its address: the server's, or a just-edited one), or null.
   const [zoom, setZoom] = useState<string | null>(null);
   const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
@@ -172,14 +173,14 @@ export function SavedTexts() {
   };
 
   /** The ISBN button (V34, in place of Mark done, which nobody used): copies the number for a listing. */
-  const copyIsbn = async (t: SavedText) => {
-    if (!t.isbn) return;
+  const copyIsbn = async (isbn: string | null, which: 1 | 2) => {
+    if (!isbn) return;
     try {
-      await navigator.clipboard.writeText(t.isbn);
-      setIsbnCopied(true);
-      setTimeout(() => setIsbnCopied(false), 2000);
+      await navigator.clipboard.writeText(isbn);
+      setIsbnCopied(which);
+      setTimeout(() => setIsbnCopied(0), 2000);
     } catch {
-      window.alert(`Couldn't copy. The ISBN is ${t.isbn}.`);
+      window.alert(`Couldn't copy. The ISBN is ${isbn}.`);
     }
   };
 
@@ -339,16 +340,34 @@ export function SavedTexts() {
                     <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
                       {copied ? "Copied ✓" : "Copy"}
                     </button>
-                    <button
-                      type="button"
-                      disabled={!text.isbn}
-                      onClick={() => void copyIsbn(text)}
-                      aria-label={text.isbn ? `Copy ISBN ${text.isbn}` : "No ISBN"}
-                      title={text.isbn ? "Copy the ISBN" : "No ISBN was photographed or typed on the phone"}
-                      className={`${button} bg-isbn font-mono text-sm text-isbn-contrast disabled:opacity-40`}
-                    >
-                      {isbnCopied ? "ISBN copied ✓" : text.isbn ? formatIsbn(text.isbn) : "No ISBN"}
-                    </button>
+                    {text.isbn && text.isbn2 ? (
+                      // Two ISBNs (V34.5): the second just below the first, in the same space, so nothing moves.
+                      <div role="group" aria-label="ISBNs" className="flex h-12 flex-col gap-0.5">
+                        {([[text.isbn, 1], [text.isbn2, 2]] as const).map(([isbn, which]) => (
+                          <button
+                            key={which}
+                            type="button"
+                            onClick={() => void copyIsbn(isbn, which)}
+                            aria-label={`Copy ${which === 2 ? "second " : ""}ISBN ${isbn}`}
+                            title={which === 2 ? "Copy the second ISBN" : "Copy the ISBN"}
+                            className={`flex min-h-0 flex-1 items-center justify-center bg-isbn px-4 font-mono text-xs text-isbn-contrast ${which === 1 ? "rounded-t-xl rounded-b-sm" : "rounded-t-sm rounded-b-xl"}`}
+                          >
+                            {isbnCopied === which ? "ISBN copied ✓" : formatIsbn(isbn)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={!text.isbn}
+                        onClick={() => void copyIsbn(text.isbn, 1)}
+                        aria-label={text.isbn ? `Copy ISBN ${text.isbn}` : "No ISBN"}
+                        title={text.isbn ? "Copy the ISBN" : "No ISBN was photographed or typed on the phone"}
+                        className={`${button} bg-isbn font-mono text-sm text-isbn-contrast disabled:opacity-40`}
+                      >
+                        {isbnCopied === 1 ? "ISBN copied ✓" : text.isbn ? formatIsbn(text.isbn) : "No ISBN"}
+                      </button>
+                    )}
                     <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
                       Delete
                     </button>

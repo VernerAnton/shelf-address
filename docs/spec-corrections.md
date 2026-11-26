@@ -934,3 +934,25 @@ tokens/s, against Gemini 3.8 Flash at $0.75/$3.75).
   room; with that, list and text box are 1.5rem shorter than the list was, and
   the page still doesn't scroll (checked at 2560×1000, 1920×1000, 1536×730,
   1366×768).
+
+## 35. ISBN on the phone, copied on the computer (V34).
+
+The owner's idea: some books have no barcode, and the ISBN is needed in the
+listing.
+
+- **Phone:** "Add another photo" (nobody used it) is replaced by a **green ISBN
+  button** with an **ISBN field** beside it, clearly apart from the back-cover
+  text. The green is the accent blue's strength and lightness in green's hue
+  (`--isbn`). Tapping ISBN opens the camera; the number appears in the field:
+  from the **barcode**, read on the phone (exact, instant), or else a
+  **printed ISBN**, read by the AI on its own (`POST /api/extract/isbn`:
+  Flash-Lite, no thinking, digits only) — checked with the ISBN check digit
+  either way. The field can be typed in or corrected; it's saved once it's a
+  valid ISBN. The **back-cover photo** is searched for an ISBN too, alongside
+  the reading (no extra wait, and the text's instructions are unchanged), if
+  the field is still empty.
+- The ISBN is saved with the text (`saved_texts.isbn`, `isbn_source` —
+  migration 0013), also on its own if there's no text yet, and also after the
+  text was corrected on the computer. Earlier texts on the phone keep theirs.
+- **Computer:** "Mark done" (nobody used it) is replaced by a **green ISBN
+  button** showing the number; a click copies it. "No ISBN" when there's none.

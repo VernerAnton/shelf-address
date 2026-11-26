@@ -6,6 +6,7 @@ import type { SavedText } from "@/lib/saved-texts";
 import { LoginForm } from "../_components/login-form";
 import { CoverPanel, coverUrl } from "./cover-panel";
 import { modelLabel } from "@/lib/ai-models";
+import { formatIsbn } from "@/lib/isbn";
 
 /** How often the list checks for new texts while it's on screen. */
 const REFRESH_MS = 5000;
@@ -42,6 +43,7 @@ export function SavedTexts() {
   const [texts, setTexts] = useState<SavedText[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isbnCopied, setIsbnCopied] = useState(false);
   // The picture shown full size (its address: the server's, or a just-edited one), or null.
   const [zoom, setZoom] = useState<string | null>(null);
   const [report, setReport] = useState<{ id: string; note: string; status: "open" | "sending" | "sent" | "error"; error?: string } | null>(null);
@@ -169,18 +171,16 @@ export function SavedTexts() {
     }
   };
 
-  /**
-   * Done: the text moves down to the Done section, and the next one still to
-   * do opens (on a phone, back to the list). Not done: it moves back up.
-   */
-  const setDone = async (t: SavedText, done: boolean) => {
-    setTexts((all) => all.map((x) => (x.id === t.id ? { ...x, doneAt: done ? new Date().toISOString() : null } : x)));
-    if (done) {
-      const next = texts.find((x) => !x.doneAt && x.id !== t.id);
-      open(next && window.matchMedia("(min-width: 768px)").matches ? next.id : null);
+  /** The ISBN button (V34, in place of Mark done, which nobody used): copies the number for a listing. */
+  const copyIsbn = async (t: SavedText) => {
+    if (!t.isbn) return;
+    try {
+      await navigator.clipboard.writeText(t.isbn);
+      setIsbnCopied(true);
+      setTimeout(() => setIsbnCopied(false), 2000);
+    } catch {
+      window.alert(`Couldn't copy. The ISBN is ${t.isbn}.`);
     }
-    await fetch(`/api/extract/texts/${t.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ done }) }).catch(() => {});
-    void load();
   };
 
   const remove = async (t: SavedText) => {
@@ -214,7 +214,7 @@ export function SavedTexts() {
             <span>{when(t.createdAt)}</span>
             <span>{t.doneAt ? "✓ Done" : t.source === "phone" ? "Read by phone — check" : "AI"}</span>
           </span>
-          <span className="line-clamp-2 text-sm">{firstWords(t.text)}</span>
+          <span className="line-clamp-2 text-sm">{firstWords(t.text) || (t.isbn ? `ISBN ${formatIsbn(t.isbn)}` : "")}</span>
         </span>
       </button>
     </li>
@@ -294,10 +294,13 @@ export function SavedTexts() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void setDone(text, !text.doneAt)}
-                      className={`${button} border border-line bg-surface`}
+                      disabled={!text.isbn}
+                      onClick={() => void copyIsbn(text)}
+                      aria-label={text.isbn ? `Copy ISBN ${text.isbn}` : "No ISBN"}
+                      title={text.isbn ? "Copy the ISBN" : "No ISBN was photographed or typed on the phone"}
+                      className={`${button} bg-isbn font-mono text-isbn-contrast disabled:opacity-40`}
                     >
-                      {text.doneAt ? "Not done" : "✓ Mark done"}
+                      {isbnCopied ? "ISBN copied ✓" : text.isbn ? formatIsbn(text.isbn) : "No ISBN"}
                     </button>
                     <button type="button" onClick={() => void remove(text)} className={`${button} border border-danger/40 text-danger`}>
                       Delete

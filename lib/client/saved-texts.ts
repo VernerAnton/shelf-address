@@ -8,7 +8,16 @@
 
 import { kvGet, kvSet } from "./kv";
 
-export type OutgoingText = { id: string; text: string; source: "ai" | "phone"; createdAt: string; updatedAt: string };
+export type OutgoingText = {
+  id: string;
+  text: string;
+  source: "ai" | "phone";
+  createdAt: string;
+  updatedAt: string;
+  /** The book's ISBN-13 and where it came from (V34). */
+  isbn?: string | null;
+  isbnSource?: "barcode" | "ai" | "typed" | null;
+};
 export type SyncResult = "saved" | "waiting" | "loggedout" | "editedOnComputer";
 
 const OUTBOX = "extract:outbox";

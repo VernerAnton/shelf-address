@@ -3,6 +3,7 @@ import { imageProblem, IMAGE_TYPES } from "@/lib/images";
 import { addPhotoLog } from "@/lib/photo-log";
 import type { AiDetails } from "@/lib/extract-ai";
 import { APP_VERSION } from "@/lib/version";
+import { parseIsbn } from "@/lib/isbn";
 
 /**
  * Saved texts (docs/spec-corrections.md §24): Extract's texts, kept so the
@@ -33,6 +34,9 @@ export type SavedText = {
   aiMs: number[];
   /** Which model read each of them (V33.4). */
   aiModels: string[];
+  /** The book's ISBN-13, and where it came from: barcode, ai or typed (V34). */
+  isbn: string | null;
+  isbnSource: string | null;
 };
 
 export class SavedTextError extends Error {
@@ -60,6 +64,8 @@ type Row = {
   readings: number;
   ai_ms: string | null;
   ai_models: string | null;
+  isbn: string | null;
+  isbn_source: string | null;
 };
 const fromRow = (r: Row): SavedText => ({
   id: r.id,
@@ -73,6 +79,8 @@ const fromRow = (r: Row): SavedText => ({
   readings: r.readings ?? 0,
   aiMs: (r.ai_ms ?? "").split(",").map(Number).filter((n) => Number.isFinite(n) && n > 0),
   aiModels: (r.ai_models ?? "").split(",").filter(Boolean),
+  isbn: r.isbn,
+  isbnSource: r.isbn_source,
 });
 
 function validId(id: string) {
@@ -124,7 +132,17 @@ export type SaveResult = "saved" | "older" | "editedOnComputer";
  * An empty text deletes it. Refused if a newer version is already there, or
  * if it has been corrected on the computer since (the computer's wins).
  */
-export async function saveText(id: string, body: { text?: unknown; source?: unknown; createdAt?: unknown; updatedAt?: unknown }): Promise<SaveResult> {
+/** The ISBN as sent: a valid one (as ISBN-13) or null; anything else is dropped. */
+function validIsbn(raw: unknown): { isbn: string | null; source: string | null } {
+  if (typeof raw !== "string" || !raw.trim()) return { isbn: null, source: null };
+  const parsed = parseIsbn(raw);
+  return parsed.ok ? { isbn: parsed.isbn13, source: null } : { isbn: null, source: null };
+}
+
+export async function saveText(
+  id: string,
+  body: { text?: unknown; source?: unknown; createdAt?: unknown; updatedAt?: unknown; isbn?: unknown; isbnSource?: unknown },
+): Promise<SaveResult> {
   validId(id);
   if (typeof body.text !== "string") throw new SavedTextError("Bad text.");
   if (body.text.length > TEXT_MAX) throw new SavedTextError("That text is too long.", 413);
@@ -136,19 +154,27 @@ export async function saveText(id: string, body: { text?: unknown; source?: unkn
     .prepare("SELECT updated_at, edited_on_computer_at FROM saved_texts WHERE id = ?")
     .bind(id)
     .first<{ updated_at: string; edited_on_computer_at: string | null }>();
-  if (existing?.edited_on_computer_at) return "editedOnComputer";
+  const { isbn } = validIsbn(body.isbn);
+  const isbnSource = isbn && ["barcode", "ai", "typed"].includes(String(body.isbnSource)) ? String(body.isbnSource) : isbn ? "typed" : null;
+  if (existing?.edited_on_computer_at) {
+    // The computer's text wins (§26), but the phone's ISBN still counts (V34).
+    if (isbn) await db.prepare("UPDATE saved_texts SET isbn = ?, isbn_source = ? WHERE id = ?").bind(isbn, isbnSource, id).run();
+    return "editedOnComputer";
+  }
   if (existing && existing.updated_at > updatedAt) return "older";
   const text = body.text.trim();
-  if (!text) {
+  // Nothing at all: gone. Just an ISBN (photographed before, or without, the back): kept (V34).
+  if (!text && !isbn) {
     await removeTexts([id]);
     return "saved";
   }
   await db
     .prepare(
-      `INSERT INTO saved_texts (id, text, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (id) DO UPDATE SET text = excluded.text, source = excluded.source, updated_at = excluded.updated_at`,
+      `INSERT INTO saved_texts (id, text, source, created_at, updated_at, isbn, isbn_source) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET text = excluded.text, source = excluded.source, updated_at = excluded.updated_at,
+         isbn = excluded.isbn, isbn_source = excluded.isbn_source`,
     )
-    .bind(id, text, source, createdAt, updatedAt)
+    .bind(id, text, source, createdAt, updatedAt, isbn, isbnSource)
     .run();
   await prune();
   return "saved";

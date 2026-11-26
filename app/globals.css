@@ -8,6 +8,9 @@
   --line: #e4e1da;
   --accent: #1d5c8c;
   --accent-contrast: #ffffff;
+  /* The ISBN button's green: the accent blue's strength and lightness, green's hue (V34). */
+  --isbn: #1d8c56;
+  --isbn-contrast: #ffffff;
   --warn-bg: #fdf3dc;
   --warn-line: #e8c872;
   --warn-text: #6a4a05;
@@ -23,6 +26,8 @@
     --line: #34322e;
     --accent: #7db8e8;
     --accent-contrast: #0e1a24;
+    --isbn: #7de8b4;
+    --isbn-contrast: #0e2419;
     --warn-bg: #33290f;
     --warn-line: #7a6120;
     --warn-text: #f3d98c;
@@ -38,6 +43,8 @@
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-contrast: var(--accent-contrast);
+  --color-isbn: var(--isbn);
+  --color-isbn-contrast: var(--isbn-contrast);
   --color-warn-bg: var(--warn-bg);
   --color-warn-line: var(--warn-line);
   --color-warn-text: var(--warn-text);

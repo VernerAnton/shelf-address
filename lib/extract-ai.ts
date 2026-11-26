@@ -292,3 +292,53 @@ async function readOnce(photo: ArrayBuffer, type: string, chosen?: string | null
     },
   };
 }
+
+/** What the model is asked for an ISBN (V34): the number only — kept apart from the text's instructions. */
+const ISBN_INSTRUCTIONS = `This is a photo of part of a book (usually its back cover).
+Find the book's ISBN: printed after "ISBN", or the digits under the barcode.
+Answer with the ISBN's digits only (10 or 13 digits; an X may end a 10-digit one), nothing else.
+If there is no ISBN in the photo, answer NONE.`;
+
+/**
+ * The book's ISBN in a photo, read by the AI on its own (V34): for a printed
+ * ISBN the phone's barcode reader can't see. Gemini 3.1 Flash-Lite, no
+ * thinking: a short answer, about 2 seconds. Returns the raw answer (the
+ * caller checks it with the ISBN check digit) and how long it took.
+ */
+export async function readIsbnWithAi(photo: ArrayBuffer, type: string): Promise<{ answer: string; ms: number }> {
+  const s = await settings();
+  if (!s.key) throw new ExtractError("AI reading isn't set up yet.", 503, "fallback");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(type)) throw new ExtractError("That isn't a photo.", 415, "fallback");
+  if (photo.byteLength === 0 || photo.byteLength > PHOTO_MAX_BYTES) throw new ExtractError("That photo is too large.", 413, "fallback");
+  const started = Date.now();
+  let response: Response;
+  try {
+    response = await fetch(`${s.base}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${s.key}`, "content-type": "application/json", "x-title": "Shelf-Address Extract ISBN" },
+      body: JSON.stringify({
+        model: "google/gemini-3.1-flash-lite",
+        temperature: 0,
+        max_tokens: 60,
+        reasoning: { effort: "none" },
+        provider: { sort: "latency" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: ISBN_INSTRUCTIONS },
+              { type: "image_url", image_url: { url: `data:${type};base64,${Buffer.from(photo).toString("base64")}` } },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new ExtractError("The AI didn't answer in time.", 504, "fallback");
+  }
+  if (!response.ok) throw new ExtractError(`The AI couldn't read it (${response.status}).`, 502, "fallback");
+  const body = (await response.json().catch(() => null)) as ChatBody | null;
+  const content = body?.choices?.[0]?.message?.content;
+  return { answer: typeof content === "string" ? content.trim().slice(0, 100) : "", ms: Date.now() - started };
+}

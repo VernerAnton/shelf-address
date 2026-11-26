@@ -10,6 +10,7 @@ import { logPhoto } from "@/lib/client/photo-log";
 import type { AiDetails } from "@/lib/extract-ai";
 import { AI_MODELS, isAllowedModel, modelLabel } from "@/lib/ai-models";
 import { tidyText } from "@/lib/extract-text";
+import { formatIsbn, parseIsbn } from "@/lib/isbn";
 import { LoginForm } from "./_components/login-form";
 
 const TEXT_KEY = "extract:text";
@@ -17,13 +18,23 @@ const TEXT_KEY = "extract:text";
 const LOGIN_KEY = "extract:login";
 /** The saved text the screen is working on (§24): its id, when it was started, how it was read. */
 const CURRENT_KEY = "extract:current";
-type Current = { id: string; createdAt: string; source: "ai" | "phone"; cover?: CoverResult };
+type IsbnSource = "barcode" | "ai" | "typed";
+type Current = { id: string; createdAt: string; source: "ai" | "phone"; cover?: CoverResult; isbn?: string | null; isbnSource?: IsbnSource | null };
 /**
  * Every text this phone has read, kept on the phone for 7 days (§28) so Start
  * over never loses one — even on a phone that isn't logged in.
  */
 const HISTORY_KEY = "extract:history";
-type Earlier = { id: string; text: string; createdAt: string; updatedAt: string; source: "ai" | "phone"; cover?: CoverResult };
+type Earlier = {
+  id: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+  source: "ai" | "phone";
+  cover?: CoverResult;
+  isbn?: string | null;
+  isbnSource?: IsbnSource | null;
+};
 const HISTORY_DAYS = 7;
 /** Front covers go to the computer at most this big (§28). */
 const COVER_SIDE = 1600;
@@ -84,6 +95,35 @@ async function forCover(file: File): Promise<Blob> {
 
 function when(iso: string) {
   return new Date(iso).toLocaleString("fi-FI", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * The book's ISBN in a photo (V34): the barcode, read on the phone (exact,
+ * instant); failing that, a printed ISBN, read by the AI on its own — a quick
+ * request apart from the text's, so the text's instructions stay as they are.
+ */
+async function findIsbn(bitmap: ImageBitmap, jpeg: Blob | null): Promise<{ isbn13: string; source: IsbnSource } | null> {
+  try {
+    const canvas = document.createElement("canvas");
+    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const { readBarcode } = await import("@/lib/client/bookops");
+    const fromBarcode = await readBarcode(canvas).catch(() => null);
+    canvas.width = canvas.height = 0;
+    if (fromBarcode) return { isbn13: fromBarcode, source: "barcode" };
+  } catch {
+    // no barcode reading here: the AI, then
+  }
+  if (!jpeg) return null;
+  try {
+    const response = await fetch("/api/extract/isbn", { method: "POST", body: jpeg, headers: { "content-type": "image/jpeg" } });
+    const body = (await response.json().catch(() => null)) as { isbn13?: string | null } | null;
+    return response.ok && body?.isbn13 ? { isbn13: body.isbn13, source: "ai" } : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A small copy for the photo log's list. */
@@ -275,6 +315,12 @@ export function ExtractScreen() {
   const [reading, setReading] = useState(false);
   // Read once; the screen shows "Loading…" until the phone's own data is in, so no mismatch with the server's render.
   const [model, setModel] = useState(chosenModel);
+  // The ISBN field (V34): what's shown/typed, and a line under it.
+  const [isbnInput, setIsbnInput] = useState("");
+  const [isbnNote, setIsbnNote] = useState<{ kind: "ok" | "warn" | "busy"; text: string } | null>(null);
+  const isbnRef = useRef<HTMLInputElement>(null);
+  // The text as it is right now (an ISBN found after the text was read must be saved with the new text).
+  const latestText = useRef("");
   // The stopwatch while a photo is read (V33.1): when it started, and the time now, ticking.
   const [readingSince, setReadingSince] = useState<number | null>(null);
   const [now, setNow] = useState(0);
@@ -302,10 +348,12 @@ export function ExtractScreen() {
       kvGet<Earlier[]>(HISTORY_KEY),
     ]).then(([saved, known, cur, lastRead, history]) => {
       setText(saved ?? "");
+      latestText.current = saved ?? "";
       if (known) setAi(known);
       setLast(lastRead ?? null);
       current.current = cur ?? null;
       setCover(cur?.cover ?? null);
+      setIsbnInput(cur?.isbn ? formatIsbn(cur.isbn) : "");
       const cutoff = new Date(Date.now() - HISTORY_DAYS * 24 * 3600 * 1000).toISOString();
       const kept = (history ?? []).filter((e) => e.updatedAt >= cutoff);
       setEarlier(kept);
@@ -370,7 +418,8 @@ export function ExtractScreen() {
 
   /** Sends the text to Saved texts (logged-in phones only), now or after typing pauses. */
   const saveSoon = (next: string, readBy: "ai" | "phone" | null, delay: number) => {
-    if (!next.trim()) return;
+    // A text, or at least an ISBN (V34), to save.
+    if (!next.trim() && !current.current?.isbn) return;
     const cur = ensureCurrent(readBy);
     if (!ai.loggedIn) return;
     if (pendingSave.current) clearTimeout(pendingSave.current.timer);
@@ -378,7 +427,16 @@ export function ExtractScreen() {
     setSave("saving");
     const run = () => {
       pendingSave.current = null;
-      void queueText({ id: cur.id, createdAt: cur.createdAt, source: cur.source, text: next.trim(), updatedAt: now })
+      const isbnNow = current.current?.id === cur.id ? current.current : cur;
+      void queueText({
+        id: cur.id,
+        createdAt: cur.createdAt,
+        source: cur.source,
+        text: next.trim(),
+        updatedAt: now,
+        isbn: isbnNow.isbn ?? null,
+        isbnSource: isbnNow.isbnSource ?? null,
+      })
         .then(syncTexts)
         .then((result) => {
           setSave(result);
@@ -414,6 +472,7 @@ export function ExtractScreen() {
   }, [reading]);
 
   const change = (next: string, readBy: "ai" | "phone" | null = null) => {
+    latestText.current = next;
     setText(next);
     void kvSet(TEXT_KEY, next);
     saveSoon(next, readBy, readBy ? 0 : SAVE_AFTER_MS);
@@ -424,6 +483,57 @@ export function ExtractScreen() {
     setReport("closed");
     setReportNote("");
     void kvSet(LAST_KEY, next).catch(() => {});
+  };
+
+  /** Puts an ISBN on the current text (or clears it) and saves it with the text (V34). */
+  const setIsbn = (isbn13: string | null, source: IsbnSource | null) => {
+    const cur = ensureCurrent(null);
+    current.current = { ...cur, isbn: isbn13, isbnSource: isbn13 ? source : null };
+    void kvSet(CURRENT_KEY, current.current);
+    if (source !== "typed") setIsbnInput(isbn13 ? formatIsbn(isbn13) : "");
+    saveSoon(latestText.current, null, source === "typed" ? SAVE_AFTER_MS : 0);
+  };
+
+  const showFound = (found: { isbn13: string; source: IsbnSource } | null) => {
+    if (found) {
+      setIsbn(found.isbn13, found.source);
+      setIsbnNote({ kind: "ok", text: found.source === "barcode" ? "✓ From the barcode" : "✓ Read by AI — check it against the book" });
+    }
+    return found;
+  };
+
+  /** The green ISBN button: photograph just the ISBN (or the barcode). */
+  const onIsbnPhoto = async (file: File | undefined) => {
+    if (!file) return;
+    setIsbnNote({ kind: "busy", text: "Reading the ISBN…" });
+    let bitmap: ImageBitmap | null = null;
+    try {
+      bitmap = await createImageBitmap(file);
+      const jpeg = await forAi(bitmap).catch(() => null);
+      if (!showFound(await findIsbn(bitmap, jpeg))) setIsbnNote({ kind: "warn", text: "No ISBN found in that photo. Try closer, or type it in." });
+    } catch {
+      setIsbnNote({ kind: "warn", text: "Couldn't read that photo. Try again, or type the ISBN in." });
+    } finally {
+      bitmap?.close();
+      if (isbnRef.current) isbnRef.current.value = "";
+    }
+  };
+
+  /** Typing in the field: saved once it's a valid ISBN (or emptied). */
+  const typeIsbn = (value: string) => {
+    setIsbnInput(value);
+    const digits = value.replace(/[\s-]/g, "");
+    if (!digits) {
+      setIsbn(null, null);
+      setIsbnNote(null);
+      return;
+    }
+    const parsed = parseIsbn(digits);
+    if (parsed.ok) {
+      setIsbn(parsed.isbn13, "typed");
+      setIsbnNote({ kind: "ok", text: "✓ Saved" });
+    } else if (digits.length >= 10) setIsbnNote({ kind: "warn", text: parsed.reason });
+    else setIsbnNote(null);
   };
 
   const onPhoto = async (file: File | undefined) => {
@@ -443,6 +553,8 @@ export function ExtractScreen() {
       let read: string | null = null;
       let details: AiDetails | null = null;
       let why: string | null = null;
+      // The ISBN, if it's on this photo too (V34): looked for alongside the reading, so no extra wait.
+      const isbnSearch = ai.loggedIn && !current.current?.isbn ? findIsbn(bitmap, jpeg) : null;
       if (ai.loggedIn) {
         try {
           if (!jpeg) throw new AiUnavailable("the photo couldn't be prepared");
@@ -487,6 +599,7 @@ export function ExtractScreen() {
         return;
       }
       change(text.trim() ? `${text.trim()}\n\n${read}` : read, readBy);
+      if (isbnSearch && !current.current?.isbn) showFound(await isbnSearch);
       setNote(
         early
           ? { kind: "warn", text: "The AI stopped early — the end of the text may be missing. Take another photo of the rest." }
@@ -589,7 +702,7 @@ export function ExtractScreen() {
     }
     let list = earlier;
     const cur = current.current;
-    if (text.trim()) {
+    if (text.trim() || cur?.isbn) {
       const entry: Earlier = {
         id: cur?.id ?? crypto.randomUUID(),
         text: text.trim(),
@@ -597,13 +710,18 @@ export function ExtractScreen() {
         updatedAt: new Date().toISOString(),
         source: cur?.source ?? "ai",
         cover: cur?.cover,
+        isbn: cur?.isbn ?? null,
+        isbnSource: cur?.isbnSource ?? null,
       };
       list = [entry, ...earlier.filter((e) => e.id !== entry.id)];
     }
     current.current = null;
     coverHeld.current = false;
     void kvSet(CURRENT_KEY, null);
+    latestText.current = "";
     setText("");
+    setIsbnInput("");
+    setIsbnNote(null);
     void kvSet(TEXT_KEY, "");
     setNote(null);
     setSave(null);
@@ -628,9 +746,11 @@ export function ExtractScreen() {
   const openEarlier = (e: Earlier) => {
     const list = putAway().filter((x) => x.id !== e.id);
     keepEarlier(list);
-    current.current = { id: e.id, createdAt: e.createdAt, source: e.source, cover: e.cover };
+    current.current = { id: e.id, createdAt: e.createdAt, source: e.source, cover: e.cover, isbn: e.isbn ?? null, isbnSource: e.isbnSource ?? null };
     void kvSet(CURRENT_KEY, current.current);
+    latestText.current = e.text;
     setText(e.text);
+    setIsbnInput(e.isbn ? formatIsbn(e.isbn) : "");
     void kvSet(TEXT_KEY, e.text);
     setCover(e.cover ?? null);
     setShowEarlier(false);
@@ -682,15 +802,57 @@ export function ExtractScreen() {
         tabIndex={-1}
         onChange={(e) => void onCover(e.target.files?.[0])}
       />
-      <button
-        type="button"
-        disabled={reading}
-        onClick={() => photoRef.current?.click()}
-        className={`${button} h-14 gap-2 ${has ? "border border-line bg-surface" : "bg-accent text-lg text-accent-contrast"}`}
-      >
-        <CameraIcon className="size-6" />
-        {reading ? "Reading the text…" : has ? "Add another photo" : "Take a photo of the text"}
-      </button>
+      <input
+        ref={isbnRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="sr-only"
+        aria-label="ISBN photo"
+        tabIndex={-1}
+        onChange={(e) => void onIsbnPhoto(e.target.files?.[0])}
+      />
+      {/* "Add another photo" is gone (V34): nobody used it. Once there's a text, the ISBN row takes its place. */}
+      {(!has || reading) && (
+        <button
+          type="button"
+          disabled={reading}
+          onClick={() => photoRef.current?.click()}
+          className={`${button} h-14 gap-2 bg-accent text-lg text-accent-contrast`}
+        >
+          <CameraIcon className="size-6" />
+          {reading ? "Reading the text…" : "Take a photo of the text"}
+        </button>
+      )}
+      {ai.loggedIn && (
+        <section aria-label="ISBN" className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={isbnNote?.kind === "busy"}
+              onClick={() => isbnRef.current?.click()}
+              className={`${button} h-14 shrink-0 gap-2 bg-isbn px-5 text-lg text-isbn-contrast`}
+            >
+              <CameraIcon className="size-5" />
+              ISBN
+            </button>
+            <input
+              aria-label="ISBN number"
+              value={isbnInput}
+              onChange={(e) => typeIsbn(e.target.value)}
+              inputMode="numeric"
+              autoComplete="off"
+              placeholder="Photograph it, or type it"
+              className="h-14 min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 font-mono text-lg outline-none focus:border-isbn"
+            />
+          </div>
+          {isbnNote && (
+            <p role="status" aria-label="ISBN status" className={`text-sm ${isbnNote.kind === "warn" ? "text-danger" : "text-muted"}`}>
+              {isbnNote.text}
+            </p>
+          )}
+        </section>
+      )}
       {has && (
         <button type="button" disabled={reading} onClick={startOver} className={`${button} bg-accent text-accent-contrast`}>
           Start over

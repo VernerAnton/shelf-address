@@ -58,6 +58,7 @@ const log = [];
 const AI_KEY = "test-openrouter-key";
 const AI_TEXT = "Väinö Linnan romaani kertoo suomalaisesta konekiväärikomppaniasta jatkosodassa.\n\nTeos on myyty yli miljoona kappaletta.";
 let aiMode = "ok";
+let aiIsbn = "found";
 let aiBook = "plain";
 const aiRequests = [];
 // What the stand-in "reads" off a BookOps book's photos.
@@ -108,6 +109,10 @@ async function chat(req, res) {
   if (req.headers.authorization !== `Bearer ${AI_KEY}` || aiMode === "badkey") return json(res, 401, { error: { message: "No auth credentials found" } });
   if (aiMode === "limit") return json(res, 402, { error: { message: "Key limit exceeded" } });
   if (aiMode === "slow") return; // never answers: the app's timeout has to handle it
+  // Extract's ISBN reading (V34): digits only — or NONE with ?isbn=none.
+  if (req.headers["x-title"] === "Shelf-Address Extract ISBN") {
+    return json(res, 200, { model: body.model, choices: [{ finish_reason: "stop", message: { role: "assistant", content: aiIsbn === "none" ? "NONE" : "9789510230763" } }] });
+  }
   if (req.headers["x-title"] === "Shelf-Address BookOps") {
     const answer = aiBook === "garbage" ? "Sorry, I can't make out these photos." : "```json\n" + JSON.stringify(BOOKOPS[aiBook] ?? BOOKOPS.plain) + "\n```";
     return json(res, 200, { choices: [{ message: { role: "assistant", content: answer } }] });
@@ -153,6 +158,7 @@ http
     if (p === "/__ai") {
       if (req.method === "POST") {
         if (url.searchParams.has("book")) aiBook = url.searchParams.get("book");
+        else if (url.searchParams.has("isbn")) aiIsbn = url.searchParams.get("isbn");
         else aiMode = url.searchParams.get("mode") || "ok";
       }
       return json(res, 200, { mode: aiMode, book: aiBook, requests: aiRequests });

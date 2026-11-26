@@ -143,13 +143,13 @@ const t = suite();
     const text = document.querySelector("[aria-label='Selected text'] textarea").getBoundingClientRect();
     return { beside: img.left >= text.right, tall: img.height, textTall: text.height, whole: document.querySelector("figure img").naturalWidth > 0 };
   });
-  check("…beside the text, big enough to judge (held to what the text's width can spare)", placed.beside && placed.whole && placed.tall >= 300, JSON.stringify(placed));
+  check("…beside the text, big enough to judge (held to what the text's width can spare)", placed.beside && placed.whole && placed.tall >= 260, JSON.stringify(placed));
   check("…and a small one in the list", (await list.getByRole("button").first().locator("img").count()) === 1 && (await list.getByRole("button").last().locator("img").count()) === 0);
   // A big screen (like the shop's, 1536×730 in the browser): the page grows to use the width (V28).
   await pc.setViewportSize({ width: 1536, height: 730 });
   await sleep(300);
   const wide = await pc.evaluate(() => {
-    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
+    const tops = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|No ISBN|ISBN copied ✓|97[89]-\d{9}-\d|Delete|Report a ?problem)$/.test(x.textContent.trim())).map((x) => Math.round(x.getBoundingClientRect().top));
     return { main: document.querySelector("main").getBoundingClientRect().width, rows: new Set(tops).size, scroll: document.documentElement.scrollHeight - innerHeight, cover: document.querySelector("figure img").getBoundingClientRect().height };
   });
   check("big screen with a cover: the page uses the width, buttons on one row, no scrolling", wide.main > 1400 && wide.rows === 1 && wide.scroll <= 1 && wide.cover >= 360, JSON.stringify(wide)); // 360: Extract has two bottom rows since V33
@@ -159,7 +159,7 @@ const t = suite();
     await pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: /^(Copy|Copied ✓)$/ }).click();
     await sleep(300);
     const after = await pc.evaluate(() => {
-      const btns = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|✓ Mark done|Delete|Report a ?problem)$/.test(x.textContent.trim()));
+      const btns = [...document.querySelectorAll("[aria-label='Selected text'] button")].filter((x) => /^(Copy|Copied ✓|No ISBN|ISBN copied ✓|97[89]-\d{9}-\d|Delete|Report a ?problem)$/.test(x.textContent.trim()));
       return { n: btns.length, rows: new Set(btns.map((x) => Math.round(x.getBoundingClientRect().top))).size, copied: btns.some((x) => x.textContent.includes("Copied")) };
     });
     check(`${w}×${h}: after Copy, the buttons stay on one row`, after.n === 4 && after.rows === 1 && after.copied, JSON.stringify(after));
@@ -292,19 +292,19 @@ const t = suite();
   check("…and the computer's version is kept", rows().some((r) => r.text.includes("Koneella lisätty")) && !rows().some((r) => r.text.includes("Puhelimella lisätty")));
   await list.getByRole("button").last().click();
 
-  // Done, not done, delete.
-  check("two texts to do, no Done section yet", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
-  await pc.getByRole("button", { name: "✓ Mark done" }).click();
-  const doneSection = pc.getByRole("region", { name: "Done" });
-  check("Mark done: moves it down to the Done section", await visible(doneSection.getByRole("button", { name: /Väinö/ })) && await visible(pc.getByRole("heading", { name: "To do (1)" })));
-  check("…and the next text to do opens", (await pc.getByRole("region", { name: "To do" }).getByRole("button").first().getAttribute("aria-current")) === "true");
-  await sleep(1000);
-  check("…stored", rows().filter((r) => r.done_at).length === 1);
-  await doneSection.getByRole("button").first().click();
-  await pc.getByRole("button", { name: "Not done" }).click();
-  check("Not done: back up to To do", await visible(pc.getByRole("heading", { name: "To do (2)" })) && (await pc.getByRole("region", { name: "Done" }).count()) === 0);
-  await sleep(1000);
-  check("Not done undoes it", rows().every((r) => !r.done_at));
+  // V34: the ISBN button in place of Mark done — the number, copied with a click.
+  check("no Mark done any more", (await pc.getByRole("button", { name: /Mark done/ }).count()) === 0);
+  const selectedId = rows().find((r) => r.text.includes("rakastettu"))?.id ?? rows()[0].id;
+  sql(`UPDATE saved_texts SET isbn = NULL WHERE id = '${selectedId}'`);
+  await pc.reload();
+  await list.getByRole("button").last().click();
+  const isbnBtn = pc.getByRole("region", { name: "Selected text" }).getByRole("button", { name: /ISBN/ });
+  check("no ISBN yet: the ISBN button says so, and can't be pressed", (await isbnBtn.innerText()) === "No ISBN" && await isbnBtn.isDisabled(), await isbnBtn.innerText());
+  sql(`UPDATE saved_texts SET isbn = '9789510230763', isbn_source = 'barcode'`);
+  await sleep(6000); // the list refreshes itself
+  check("with an ISBN: shown on the button", (await isbnBtn.innerText()) === "978-951023076-3", await isbnBtn.innerText());
+  await isbnBtn.click();
+  check("…a click copies it", await visible(pc.getByRole("button", { name: /Copy ISBN/ }).getByText("ISBN copied ✓")) && (await pc.evaluate(() => navigator.clipboard.readText())) === "9789510230763");
   pc.once("dialog", (d) => d.accept());
   await pc.getByRole("button", { name: "Delete" }).click();
   await sleep(1000);

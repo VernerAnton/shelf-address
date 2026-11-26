@@ -50,7 +50,7 @@ async function turned(picture: Blob, direction: 1 | -1): Promise<Blob> {
 }
 
 const IMAGE =
-  "max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_66rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_66rem)_*_1.45))]";
+  "max-h-[70vh] w-full rounded-xl border border-line bg-line object-contain md:h-[calc(100dvh-31.5rem)] md:max-h-none md:min-h-48 md:w-auto md:max-w-[26rem] xl:h-[min(calc(100dvh_-_26rem),calc((min(100vw,96rem)_-_68rem)_*_1.45))] xl:max-w-[calc(min(100vw,96rem)_-_68rem)] 2xl:h-[min(calc(100dvh_-_22.5rem),calc((min(100vw,96rem)_-_68rem)_*_1.45))]";
 
 /**
  * The front cover on Saved texts (docs/spec-corrections.md §28): large, to
@@ -67,7 +67,7 @@ const IMAGE =
  * Wide screens: the buttons sit beside the picture, so it can be as tall as
  * the whole text column. Its size is also held to the width the text column
  * can spare: the text's buttons need ~30rem to stay on one row, and the list,
- * gaps and these buttons take 66rem of the page. The heights allow for both
+ * gaps and these buttons take 68rem of the page. The heights allow for both
  * bottom rows (the tabs and Extract's own).
  */
 export function CoverPanel({ text, button, onZoom, onChanged }: { text: SavedText; button: string; onZoom: (src: string) => void; onChanged: () => Promise<void> }) {

@@ -956,3 +956,8 @@ listing.
   text was corrected on the computer. Earlier texts on the phone keep theirs.
 - **Computer:** "Mark done" (nobody used it) is replaced by a **green ISBN
   button** showing the number; a click copies it. "No ISBN" when there's none.
+- **V34.1:** the ISBN button (a 13-digit number) is wider than Mark done
+  was, so the button row wrapped on some screens. The correction status moved
+  into the text box's bottom corner (no line of its own), the ISBN number is a
+  size smaller, and beside a cover the text column gets 2rem more (the
+  cover's width budget is 68rem, was 66rem).

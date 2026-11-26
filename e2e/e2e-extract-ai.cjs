@@ -2,9 +2,13 @@
 // Extract's AI reading (spec-corrections §23): behind an access code (only
 // Extract — the rest of the app stays open), read by a vision model through the
 // app's server (an OpenRouter stand-in here), the phone reader as backup.
-const { suite, browser, phone, visible, sleep, BOOKS } = require("./lib.cjs");
+const { suite, browser, phone, visible, sleep, sql, BOOKS } = require("./lib.cjs");
 
-const ai = (mode) => fetch(`${BOOKS}/__ai${mode ? `?mode=${mode}` : ""}`, { method: mode ? "POST" : "GET" }).then((r) => r.json());
+// The stand-in's requests, without the separate ISBN readings (V34) that run alongside the text's.
+const ai = (mode) =>
+  fetch(`${BOOKS}/__ai${mode ? `?mode=${mode}` : ""}`, { method: mode ? "POST" : "GET" })
+    .then((r) => r.json())
+    .then((j) => ({ ...j, requests: (j.requests ?? []).filter((r) => r.title !== "Shelf-Address Extract ISBN") }));
 
 // A phone photo (3000×4000) of a back cover, readable by the phone reader too.
 const cover = (page, lines) => page.evaluate((lines) => {
@@ -76,11 +80,39 @@ const t = suite();
   check("…with thinking off", req.reasoning && req.reasoning.effort === "none", JSON.stringify(req.reasoning));
   check("…and the fastest-answering provider asked for", req.provider && req.provider.sort === "latency", JSON.stringify(req.provider));
 
-  // Start over sits at the top, right under the photo button (V26).
-  const another = page.getByRole("button", { name: "Add another photo" });
+  // V34: the ISBN row in place of "Add another photo"; Start over under it, above the text.
+  const isbnRow = page.getByRole("region", { name: "ISBN" });
   const startOverButton = page.getByRole("button", { name: "Start over" });
-  const [ya, ys, yt] = await Promise.all([another, startOverButton, box].map((l) => l.boundingBox().then((r) => r && r.y)));
-  check("Start over right under Add another photo, above the text", ya < ys && ys < yt && (await startOverButton.count()) === 1, JSON.stringify([ya, ys, yt]));
+  const [ya, ys, yt] = await Promise.all([isbnRow, startOverButton, box].map((l) => l.boundingBox().then((r) => r && r.y)));
+  check("no Add another photo any more; the ISBN row, Start over under it, above the text", (await page.getByRole("button", { name: "Add another photo" }).count()) === 0 && ya < ys && ys < yt && (await startOverButton.count()) === 1, JSON.stringify([ya, ys, yt]));
+  const isbnField = isbnRow.getByLabel("ISBN number");
+  check("the back photo's ISBN found alongside the reading, into the field", await page.waitForFunction(() => document.querySelector("[aria-label='ISBN number']")?.value === "978-951023076-3", null, { timeout: 15000 }).then(() => true, () => false), await isbnField.inputValue());
+  check("…said to be read by AI", await visible(isbnRow.getByText("✓ Read by AI — check it against the book")));
+  const isbnButton = isbnRow.getByRole("button", { name: "ISBN" });
+  check("the ISBN button is green (the blue's strength, green's hue)", /bg-isbn/.test(await isbnButton.getAttribute("class")) && (await isbnButton.evaluate((b) => getComputedStyle(b).backgroundColor)) === "rgb(29, 140, 86)", await isbnButton.evaluate((b) => getComputedStyle(b).backgroundColor));
+  // Just the ISBN: the green button opens the camera; nothing there → said so.
+  await isbnField.fill("");
+  await fetch(`${BOOKS}/__ai?isbn=none`, { method: "POST" });
+  let isbnCam = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+  await isbnButton.click();
+  let chooserIsbn = await isbnCam;
+  check("ISBN button: opens the camera for the ISBN", chooserIsbn !== null && (await chooserIsbn.element().getAttribute("aria-label")) === "ISBN photo");
+  await chooserIsbn.setFiles({ name: "ISBN.jpg", mimeType: "image/jpeg", buffer: await cover(page, ["ei numeroa"]) });
+  check("…no ISBN in the photo: says so", await visible(isbnRow.getByText(/No ISBN found in that photo/), 15000));
+  await fetch(`${BOOKS}/__ai?isbn=found`, { method: "POST" });
+  isbnCam = page.waitForEvent("filechooser", { timeout: 5000 }).catch(() => null);
+  await isbnButton.click();
+  chooserIsbn = await isbnCam;
+  await chooserIsbn.setFiles({ name: "ISBN.jpg", mimeType: "image/jpeg", buffer: await cover(page, ["ISBN 951-0-23076-6"]) });
+  check("…a printed ISBN: in the field", await page.waitForFunction(() => document.querySelector("[aria-label='ISBN number']")?.value === "978-951023076-3", null, { timeout: 15000 }).then(() => true, () => false), await isbnField.inputValue());
+  // Typing: a wrong one is explained, a right one (10 digits) saved as 13.
+  await isbnField.fill("951-0-23076-5");
+  check("typed ISBN with a wrong check digit: explained", await visible(isbnRow.getByText(/last digit doesn't check out/)));
+  await isbnField.fill("951-0-23076-6");
+  check("…a right one: saved", await visible(isbnRow.getByText("✓ Saved")));
+  await sleep(1500);
+  const savedIsbn = sql("SELECT isbn, isbn_source FROM saved_texts ORDER BY updated_at DESC LIMIT 1")[0];
+  check("…stored with the text, as ISBN-13", savedIsbn && savedIsbn.isbn === "9789510230763" && savedIsbn.isbn_source === "typed", JSON.stringify(savedIsbn));
 
   // Report a reading (V26): the note is optional.
   const reportArea = page.getByRole("region", { name: "Report a problem" });

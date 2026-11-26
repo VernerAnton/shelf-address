@@ -274,6 +274,7 @@ export function SavedTexts() {
               {text.doneAt && <p className="-mt-1 text-sm font-medium text-muted">✓ Done — moved to the Done list.</p>}
               <div className={text.coverAt ? "flex flex-col gap-4 md:flex-row md:items-start" : ""}>
                 <div className="flex min-w-0 flex-1 flex-col gap-3">
+                  <div className="relative">
                   <textarea
                     aria-label="Text"
                     value={shown}
@@ -282,12 +283,23 @@ export function SavedTexts() {
                     lang="fi"
                     spellCheck
                     rows={14}
-                    className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
+                    className={`block min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
                       // On a wide screen (the page grows with a cover) they fit on one row again.
                       text.coverAt ? "md:h-[calc(100dvh-28rem)] xl:h-[calc(100dvh-24.5rem)]" : "md:h-[calc(100dvh-24.5rem)]"
                     }`}
                   />
+                  {/* In the text box's corner (V34): no line of its own, so the box keeps its height and the buttons their row. */}
+                  <p role="status" aria-label="Correction" className={`pointer-events-none absolute right-5 bottom-3 max-w-[70%] rounded-md bg-surface/90 px-2 text-right text-xs ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
+                    {draft?.id === text.id
+                      ? draft.status === "saving"
+                        ? "Saving…"
+                        : draft.status === "saved"
+                          ? "✓ Correction saved. The phone can't change this text any more."
+                          : (draft.error ?? "Couldn't save the correction.")
+                      : "Corrections save by themselves."}
+                  </p>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
                     <button type="button" onClick={() => void copy(text)} className={`${button} min-w-[7.5rem] bg-accent text-accent-contrast`}>
                       {copied ? "Copied ✓" : "Copy"}
@@ -298,7 +310,7 @@ export function SavedTexts() {
                       onClick={() => void copyIsbn(text)}
                       aria-label={text.isbn ? `Copy ISBN ${text.isbn}` : "No ISBN"}
                       title={text.isbn ? "Copy the ISBN" : "No ISBN was photographed or typed on the phone"}
-                      className={`${button} bg-isbn font-mono text-isbn-contrast disabled:opacity-40`}
+                      className={`${button} bg-isbn font-mono text-sm text-isbn-contrast disabled:opacity-40`}
                     >
                       {isbnCopied ? "ISBN copied ✓" : text.isbn ? formatIsbn(text.isbn) : "No ISBN"}
                     </button>
@@ -320,16 +332,6 @@ export function SavedTexts() {
                         </span>
                       </button>
                     )}
-                    {/* Beside the buttons, not on a line of its own: the text box gets that height (V33.10). */}
-                    <p role="status" aria-label="Correction" className={`col-span-2 self-center text-sm md:min-w-40 md:flex-1 ${draft?.status === "error" ? "text-danger" : "text-muted"}`}>
-                      {draft?.id === text.id
-                        ? draft.status === "saving"
-                          ? "Saving…"
-                          : draft.status === "saved"
-                            ? "✓ Correction saved. The phone can't change this text any more."
-                            : (draft.error ?? "Couldn't save the correction.")
-                        : "Corrections save by themselves."}
-                    </p>
                   </div>
                 </div>
 

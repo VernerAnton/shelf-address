@@ -285,7 +285,7 @@ export function SavedTexts() {
                     className={`min-h-72 w-full resize-y rounded-xl border border-line bg-surface p-4 text-base leading-relaxed outline-none focus:border-accent md:min-h-48 md:text-lg ${
                       // Beside a cover the buttons take two rows: a little less height keeps the page from scrolling.
                       // On a wide screen (the page grows with a cover) they fit on one row again.
-                      text.coverAt ? "md:h-[calc(100dvh-31.5rem)] xl:h-[calc(100dvh-28rem)]" : "md:h-[calc(100dvh-24.5rem)]"
+                      text.coverAt ? "md:h-[calc(100dvh-28rem)] xl:h-[calc(100dvh-24.5rem)]" : "md:h-[calc(100dvh-24.5rem)]"
                     }`}
                   />
                   <div className="grid grid-cols-2 gap-2 md:flex md:flex-wrap">
